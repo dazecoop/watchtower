@@ -22,10 +22,11 @@ everything is SwiftUI and AppKit.
 | `WindowFocuser.swift` | Accessibility-based editor window focusing. |
 | `AttentionNotifier.swift` | Working → waiting transition alerts. |
 | `Theme.swift` | Themes and the environment keys. |
-| `Views.swift` | Grid, tiles, feed lines, thinking indicator, shimmer. |
+| `Views.swift` | Grid, tiles, feed lines, thinking indicator, shimmer, the age fade. |
 | `Animations.swift` | The looping animations, as Core Animation layers (see Performance). |
-| `Overlay.swift` | The notch: edge placement maths, the `NSPanel` that hosts it, dragging, and click-to-reveal. |
-| `OverlayView.swift` | Its contents — the notch outline, the concentric usage gauge and the spinner. |
+| `Overlay.swift` | The notch: edge placement maths, the `NSPanel` that hosts it, dragging, click-to-reveal, and the expand/collapse lifecycle. |
+| `OverlayView.swift` | Its contents — the notch outline, the concentric usage gauge, the spinner, and the morphing geometry of the swell. |
+| `OverlayExpansion.swift` | What the notch opens into: the summary panel, the whole dashboard, and the sizing the controller measures against. |
 | `ClaudeMark.swift` | The Claude logomark as path commands (see below). |
 
 ### Generated images
@@ -113,10 +114,68 @@ scaled, which would resample the text and leave it soft. An existing
 small/medium/large choice is carried over to the slider on first run rather
 than being reset.
 
+The multiplier stops at the bezel. Nothing in `OverlayExpansion` scales with
+it: the slider sets how big the notch sits on the edge, and once it is open it
+is a panel you are reading, where a small notch has no business shipping
+eight-point type.
+
 `OverlayController` decides when an end counts as cornered, with two thresholds
 rather than one: squaring an end shortens the panel, which nudges the very
 measurement the decision was made from, and a single threshold would let it
 flip back and forth every frame.
+
+### Expanding the notch
+
+The notch and the open panel are the same black shape at two sizes. Resizing
+the window through the animation stutters and clips whatever is mid-flight, so
+the panel takes the open frame *first*, with the content still drawn at the
+collapsed size and sitting exactly where the notch already was — nothing jumps
+— and the shape then springs between the two inside a window already big enough
+to hold it. On the way closed the panel outlasts the spring by `settle`, so the
+shape has somewhere to shrink *into* rather than being clipped by a window that
+has already given the space back. `expanded` is the target state; `inflated` is
+whether the panel is still holding the open size.
+
+`OverlayView` expresses the whole thing along the edge and into the screen, and
+maps onto x and y at the very end, so one set of rules covers all four edges.
+The panel grows out of whichever edge the notch is docked to, symmetrically
+about the point it is parked at, and `OverlayPlacement.frame(anchoredAt:)`
+slides it back onto the screen when an end would overhang — so a notch in a
+corner opens *along* the screen rather than off it. `anchorAlong` is what keeps
+the collapsed shape in the right place inside an off-centre panel.
+
+Three things the layout has to respect, all of which showed up as clipping:
+
+- The size must be imposed on the stack *before* the background, or the shape
+  fits itself to the fixed-size gauge and the swell leaves a notch-sized bezel
+  floating in an open panel.
+- The content is pinned to the size it will settle at and clipped by the shape
+  on the way there. Left to fit the shape as it springs, it re-wraps every
+  frame and the panel arrives through a blur of truncating text.
+- The fillets at each end, and the strip a corner sweep reserves, belong to the
+  shape rather than the content — the open panel sets aside exactly what the
+  collapsed one does.
+
+Hover is driven by polling `NSEvent.mouseLocation`, not by `onHover`. The panel
+never becomes key, and swapping the collapsed body for the open one re-enters
+the hover state without the mouse having moved, which shut the panel the
+instant it opened. The same timer closes it once the pointer has been away for
+a moment. It ticks at 20Hz because the open delay can be set to zero, and a
+coarse timer would make "instant" feel like a quarter second.
+
+In full-app mode the notch replaces the window, so the header carries a cog
+rather than a way back. Opening Settings from there is more delicate than it
+looks. Sending `showSettingsWindow:` down the responder chain goes nowhere,
+because nothing here is key; driving the menu item by hand fares no better.
+`SettingsLink` works, but brings two problems of its own. It opens the window
+wherever it was last left — another Space, behind what you are looking at, or
+on a display since unplugged — so `raiseSettings` watches for it, moves it to
+the active Space, and orders it front at a floating level before dropping back
+to normal, since asking to be activated is refused when the click arrived at a
+panel that will not activate the app. And the gesture that collapses the notch
+runs *alongside* the link rather than after it, so it waits one turn of the run
+loop — collapsing synchronously tears the link out of the view tree before its
+own action has run, and Settings never opens at all.
 
 ### The Claude logomark
 

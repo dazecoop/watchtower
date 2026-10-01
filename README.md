@@ -18,7 +18,9 @@ It only ever reads. There is no way to send a message to a session from here.
 
 When you don't need the whole dashboard, there is the **notch**: a small black
 readout that sits flush against a screen edge, showing plan usage and whether
-anything is running. Click it to bring the dashboard back. With the notch on,
+anything is running. Click it to bring the dashboard back — or have it swell
+open in place, Dynamic Island style, into either a summary of the fleet or the
+entire dashboard, without a window ever coming forward. With the notch on,
 Watchtower can run without a Dock icon at all.
 
 <img width="1830" height="1200" alt="screenshot" src="https://github.com/user-attachments/assets/70c7b0fb-d5ea-45ba-80ea-87c9fe1c2a4d" />
@@ -39,7 +41,7 @@ have never run Claude Code, there will be nothing to show.
   <img src="docs/download-macos.png" alt="Download for macOS" width="236">
 </a>
 
-1. Download `Watchtower-1.2.0.dmg` from the
+1. Download `Watchtower-1.3.0.dmg` from the
    [latest release](https://github.com/dazecoop/watchtower/releases/latest).
 2. Open it and drag **Watchtower** into **Applications**.
 3. Launch it.
@@ -81,7 +83,8 @@ Each session gets a tile:
 
 - **Name and status.** Green *Working* means Claude is mid-turn. Amber *Your
   turn* means it has finished and is waiting on you. Grey *Idle* means nothing
-  has happened for half an hour.
+  has happened for half an hour — and an idle tile keeps fading the longer it
+  stays quiet, so an hour's silence and a day's don't look alike.
 - **Title** is the summary Claude Code generates for the session, with the
   project folder and git branch beneath it.
 - **Thinking indicator** appears while a turn is running, counting from the
@@ -139,6 +142,25 @@ set how far. Slide it into a screen corner and it picks up a second sweep into
 the edge it has just met, so it sits in the corner rather than curving away
 from it. The sweep can be turned off entirely.
 
+#### Expanding in place
+
+Rather than bringing the window forward, the notch can swell open where it
+sits. It grows out of whichever edge it is docked to, about the point it is
+parked at, and slides back onto the screen instead of off it when it is sitting
+in a corner. It closes again when the pointer leaves.
+
+Set it to open on a **click**, or on **hover** with a delay you choose from
+instant up to a second. And choose what it opens into:
+
+- **Summary** — a line per session with what it is doing and how long ago, plus
+  your plan limits. Click a session to jump to its editor window, *Open* for
+  the full window, or click anywhere to close.
+- **Full app** — the entire dashboard, tiles and all, inside the notch, with a
+  cog for Settings in place of any way back to the window. In this mode the
+  notch *is* the app: clicks inside go to the dashboard, so it closes by moving
+  away. It always draws on the notch's black rather than your chosen theme,
+  since anything lighter reads as a window sitting in the bezel.
+
 **Credit where it's due.** The idea came from
 [Codenotch](https://github.com/vinzdg/codenotch), which pins a usage readout to
 a screen edge and covers several coding assistants at once — Claude, Cursor,
@@ -153,16 +175,40 @@ assistants' usage side by side, Codenotch is the better tool.
 
 ## Settings (⌘,)
 
+Four pages down the left.
+
+### Appearance
+
 | | |
 | --- | --- |
 | **Theme** | Six themes. *System*, *Light* and *Dark* use macOS vibrancy, so your wallpaper shows faintly through. *Slate*, *Midnight* and *Nocturne* are opaque — nothing bleeds through. |
 | **Columns** | Dynamic, or a fixed 1–4. Dynamic fits as many tiles as the window allows. |
 | **Render markdown** | Show `**bold**` and backticks as formatting rather than raw syntax. |
 | **Thinking indicator** | Turn the animated status off if you prefer it still. |
+
+### Notch
+
+| | |
+| --- | --- |
+| **Show the notch** | On or off. |
+| **Position** | Which screen edge it sits on, and where along that edge. You can also just drag it. |
+| **Size** | How big it sits on the bezel. This sizes the notch itself, not what it opens into — an expanded panel is always at a readable size. |
+| **Rounding** | How far it sweeps out of the screen edge, and how much its inner corners are rounded. Both move together; the sweep can also be switched off. |
+
+### Expanding
+
+| | |
+| --- | --- |
+| **Expand the notch in place** | Swell it open where it sits instead of bringing the window forward. |
+| **Opens on** | Click, or hover with a delay from instant to a second. |
+| **Opens into** | *Summary* or *Full app* — see [above](#expanding-in-place). |
+
+### Behaviour
+
+| | |
+| --- | --- |
 | **Notify when a session needs you** | A notification the moment a session stops working and starts waiting on your reply. The most useful setting here when several are running. |
 | **Menu bar status** | Off by default. Adds a working/waiting count to the menu bar with a jump-to menu. |
-| **Overlay** | The notch: on or off, which screen edge it sits on, where along that edge, and how big it is. |
-| **Rounding** | How far the notch sweeps out of the screen edge, and how much its inner corners are rounded. Both move together; the sweep can also be switched off. |
 | **Hide Dock icon** | Runs Watchtower in the background with no Dock icon and no app menu. Needs the notch or the menu bar status on first, since one of them has to be able to open the window again — otherwise the setting is greyed out, and turning both off later puts the Dock icon back. |
 
 The toolbar also has a filter field for narrowing by name, project or title,
@@ -210,7 +256,7 @@ produces this same warning, regardless of what it does.
 
 If you would rather not take that on trust, you do not have to:
 
-- **Read the source.** It is all here, and it is small — under 2,000 lines of
+- **Read the source.** It is all here, and it is small — around 5,000 lines of
   Swift with no third-party dependencies.
 - **Check it cannot phone home.** There are no networking APIs anywhere in
   `Sources/`, and the compiled binary links zero networking symbols. You can
