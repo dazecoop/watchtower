@@ -21,7 +21,7 @@ readout that sits flush against a screen edge, showing plan usage and whether
 anything is running. Click it to bring the dashboard back. With the notch on,
 Watchtower can run without a Dock icon at all.
 
-![The Watchtower dashboard in three of its six themes, with the notch on the screen edge](docs/social-preview.png)
+![The Watchtower dashboard in three of its six themes, with the notch on the screen edge](docs/screenshot.png)
 
 ---
 
