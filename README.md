@@ -16,7 +16,7 @@ of your plan you have used.
 
 It only ever reads. There is no way to send a message to a session from here.
 
-![Watchtower](docs/screenshot.png)
+![Watchtower](docs/social-preview.png)
 
 ---
 
