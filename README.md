@@ -11,6 +11,8 @@ of your plan you have used.
 
 It only ever reads. There is no way to send a message to a session from here.
 
+![Watchtower](docs/screenshot.png)
+
 ---
 
 ## Requirements
@@ -57,26 +59,6 @@ no longer matches.
 ## Reading the dashboard
 
 Each session gets a tile:
-
-```
- ● daze-c3   Working                    3s  ⬀
- Fixing the checkout validation bug
- ~/Work/shop  ·  main
-
- ✳ Simmering… 12s
-
- ┌──────────────────────────────────────────┐
- │ so far                                   │
- │ Both tests pass now. Let me check the    │
- │ edge case where the cart is empty.       │
- └──────────────────────────────────────────┘
-
- ↳ 3 passing  (12 lines)
- ✂ Bash   npm test
- ≡ says   Running the suite again
-
- Opus 5   128k   17                   VS Code
-```
 
 - **Name and status.** Green *Working* means Claude is mid-turn. Amber *Your
   turn* means it has finished and is waiting on you. Grey *Idle* means nothing

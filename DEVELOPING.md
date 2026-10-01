@@ -24,6 +24,19 @@ everything is SwiftUI and AppKit.
 | `Theme.swift` | Themes and the environment keys. |
 | `Views.swift` | Grid, tiles, feed lines, thinking indicator, shimmer. |
 
+### Demo mode
+
+`WT_DEMO=1` swaps the real data source for fabricated sessions in
+`DemoData.swift` — invented project names, folders and conversation text,
+covering all three states. That is how `docs/screenshot.png` is produced, so
+the README never exposes real project names or chat content:
+
+```bash
+WT_DEMO=1 dist/Watchtower.app/Contents/MacOS/Watchtower
+```
+
+The flag is read once at launch and is unreachable otherwise.
+
 ### Two SwiftUI traps worth knowing
 
 Both cost real debugging time and are commented in place:

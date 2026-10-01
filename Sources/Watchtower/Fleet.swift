@@ -375,6 +375,13 @@ final class FleetStore: ObservableObject {
     }
 
     func refresh() {
+        if DemoData.isEnabled {
+            sessions = DemoData.sessions
+            usage = DemoData.usage
+            recomputeOrder()
+            return
+        }
+
         queue.async { [engine] in
             let snaps = engine.collect()
             let usage = engine.usage()
