@@ -39,7 +39,7 @@ have never run Claude Code, there will be nothing to show.
   <img src="docs/download-macos.png" alt="Download for macOS" width="236">
 </a>
 
-1. Download `Watchtower-1.1.0.dmg` from the
+1. Download `Watchtower-1.2.0.dmg` from the
    [latest release](https://github.com/dazecoop/watchtower/releases/latest).
 2. Open it and drag **Watchtower** into **Applications**.
 3. Launch it.
