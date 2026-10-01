@@ -41,15 +41,20 @@ have never run Claude Code, there will be nothing to show.
 
 ### First launch
 
-The app is signed with a personal development certificate rather than a paid
-Apple Developer ID, so macOS will not recognise the signature on a machine
-other than the one that built it. If you see *"Watchtower cannot be opened
-because the developer cannot be verified"*:
+macOS will block it the first time and say it *"could not verify Watchtower is
+free of malware"*. That is expected, nothing was detected, and you only need to
+clear it once — see [the FAQ below](#macos-says-it-could-not-verify-watchtower-is-free-of-malware-is-something-wrong)
+for what the message actually means.
 
-- Right-click the app → **Open** → **Open**, or
-- **System Settings → Privacy & Security**, then **Open Anyway**
+1. Try to open Watchtower. macOS blocks it.
+2. Open **System Settings → Privacy & Security** and scroll to **Security**.
+3. Click **Open Anyway**, then confirm.
 
-You only need to do this once.
+![Open Anyway in System Settings](docs/gatekeeper.png)
+
+On older versions of macOS you could right-click the app and choose **Open**
+instead. That shortcut no longer works for this kind of block, so use System
+Settings.
 
 ### Giving it Accessibility access (optional)
 
@@ -148,9 +153,56 @@ added at the end rather than pushed into the middle.
 
 ## Privacy
 
-Everything stays on your machine. Watchtower reads local files under
-`~/.claude` and makes no network requests of any kind. It does not write to
-your sessions, and it cannot send input to Claude.
+Everything stays on your machine: Watchtower reads local files under
+`~/.claude` and makes no network requests of any kind. See the FAQ for
+[what it does and does not touch](#does-it-send-my-code-or-conversations-anywhere),
+and how to verify that yourself.
+
+## FAQ
+
+### macOS says it could not verify Watchtower is free of malware. Is something wrong?
+
+No, and nothing was found. That message does not mean macOS scanned the app and
+detected something — it means the opposite. It has **not** been scanned, so
+macOS cannot vouch for it and says so in strong terms.
+
+The check it failed is **notarisation**: uploading the app to Apple to be
+scanned and stamped. That requires a paid Apple Developer account, which this
+project does not have. Every app distributed outside the App Store without one
+produces this same warning, regardless of what it does.
+
+If you would rather not take that on trust, you do not have to:
+
+- **Read the source.** It is all here, and it is small — under 2,000 lines of
+  Swift with no third-party dependencies.
+- **Check it cannot phone home.** There are no networking APIs anywhere in
+  `Sources/`, and the compiled binary links zero networking symbols. You can
+  confirm that yourself:
+  ```bash
+  nm -u /Applications/Watchtower.app/Contents/MacOS/Watchtower | grep -ci "CFNetwork\|NSURLSession"
+  # 0
+  ```
+- **Build it yourself** and skip the download entirely — `./build.sh`, then the
+  warning never appears, because an app you built locally is not quarantined.
+
+### Why does it need Accessibility access?
+
+Only for the reveal button that jumps to a session's editor window. macOS
+treats controlling another app's windows as an accessibility action, so there
+is no way to offer it without the permission. Decline it and everything else
+works; the button simply turns into a lock.
+
+### Does it send my code or conversations anywhere?
+
+No. It reads files under `~/.claude` that Claude Code has already written, and
+that is all. Nothing is uploaded, and there is no telemetry or analytics. Plan
+usage figures come from a cache Claude Code keeps on disk, not from a request
+to Anthropic.
+
+### Can it interfere with my sessions?
+
+No. Every file is opened read-only, and the app has no way to send input to a
+session. The worst it can do is show you something out of date.
 
 ## Troubleshooting
 
