@@ -24,6 +24,18 @@ everything is SwiftUI and AppKit.
 | `Theme.swift` | Themes and the environment keys. |
 | `Views.swift` | Grid, tiles, feed lines, thinking indicator, shimmer. |
 
+### Generated images
+
+`docs/download-macos.png` and the app icon are drawn in code, not checked in as
+hand-made assets:
+
+```bash
+swiftc -O Resources/MakeBadge.swift -o /tmp/makebadge && /tmp/makebadge docs/download-macos.png
+```
+
+`build.sh` regenerates `Resources/AppIcon.png` from `Resources/MakeIcon.swift`
+whenever the generator is newer.
+
 ### Demo mode
 
 `WT_DEMO=1` swaps the real data source for fabricated sessions in

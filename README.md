@@ -1,5 +1,10 @@
 # Watchtower
 
+[![Build](https://github.com/dazecoop/watchtower/actions/workflows/build.yml/badge.svg)](https://github.com/dazecoop/watchtower/actions/workflows/build.yml)
+![Platform](https://img.shields.io/badge/platform-macOS%2014%2B-0A0A0C)
+![Swift](https://img.shields.io/badge/swift-6-F05138)
+![Licence](https://img.shields.io/badge/licence-MIT-2F7DD1)
+
 A read-only macOS dashboard that tiles every running Claude session into a
 single window, so you can see what each project is doing at a glance.
 
@@ -24,6 +29,10 @@ Watchtower reads the files Claude Code already writes to `~/.claude`. If you
 have never run Claude Code, there will be nothing to show.
 
 ## Install
+
+<a href="https://github.com/dazecoop/watchtower/releases/latest">
+  <img src="docs/download-macos.png" alt="Download for macOS" width="236">
+</a>
 
 1. Download `Watchtower-1.0.0.dmg` from the
    [latest release](https://github.com/dazecoop/watchtower/releases/latest).

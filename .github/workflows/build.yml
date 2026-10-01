@@ -1,0 +1,33 @@
+name: Build
+
+# Docs-only changes are excluded so README edits don't spend macOS runner
+# minutes, which bill at 10x on private repositories.
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'LICENSE'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build and package
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: swift --version
+
+      - name: Build and assemble bundle
+        run: ./build.sh
+
+      - name: Verify bundle
+        run: |
+          test -x dist/Watchtower.app/Contents/MacOS/Watchtower
+          test -f dist/Watchtower.app/Contents/Resources/AppIcon.icns
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" dist/Watchtower.app/Contents/Info.plist
+          codesign --verify --strict --verbose=2 dist/Watchtower.app
