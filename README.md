@@ -50,7 +50,7 @@ for what the message actually means.
 2. Open **System Settings → Privacy & Security** and scroll to **Security**.
 3. Click **Open Anyway**, then confirm.
 
-![Open Anyway in System Settings](docs/gatekeeper.png)
+<img src="docs/gatekeeper.png" alt="Open Anyway in System Settings" width="500">
 
 On older versions of macOS you could right-click the app and choose **Open**
 instead. That shortcut no longer works for this kind of block, so use System
