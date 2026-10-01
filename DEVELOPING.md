@@ -30,8 +30,14 @@ everything is SwiftUI and AppKit.
 hand-made assets:
 
 ```bash
-swiftc -O Resources/MakeBadge.swift -o /tmp/makebadge && /tmp/makebadge docs/download-macos.png
+swiftc -O Resources/MakeBadge.swift  -o /tmp/makebadge  && /tmp/makebadge docs/download-macos.png
+swiftc -O Resources/MakeSocial.swift -o /tmp/makesocial && /tmp/makesocial
 ```
+
+`MakeSocial.swift` builds `docs/social-preview.png`, the 1280x640 card GitHub
+serves as `og:image`. Committing it is not enough — GitHub only picks it up
+once it is uploaded under **Settings → General → Social preview**, which has no
+API or CLI equivalent. Re-upload after regenerating.
 
 `build.sh` regenerates `Resources/AppIcon.png` from `Resources/MakeIcon.swift`
 whenever the generator is newer.
