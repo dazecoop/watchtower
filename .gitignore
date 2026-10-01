@@ -1,0 +1,9 @@
+# Build output
+.build/
+dist/
+*.dmg
+
+# Generated from Resources/MakeIcon.swift at build time
+Resources/AppIcon.png
+
+.DS_Store

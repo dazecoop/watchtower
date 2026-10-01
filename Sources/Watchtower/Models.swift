@@ -1,0 +1,158 @@
+import Foundation
+
+/// How a session presents in the grid. Derived from the registry status plus
+/// how long it has been since anything happened.
+enum SessionState: Int, Comparable {
+    case working   // Claude is actively running a turn
+    case waiting   // turn finished recently; it's your move
+    case dormant   // alive, but nothing has happened in a long while
+
+    static func < (a: SessionState, b: SessionState) -> Bool { a.rawValue < b.rawValue }
+
+    var label: String {
+        switch self {
+        case .working: return "Working"
+        case .waiting: return "Your turn"
+        case .dormant: return "Idle"
+        }
+    }
+}
+
+struct ActivityEvent: Identifiable, Equatable {
+    enum Kind: Equatable {
+        case prompt      // you said something
+        case thinking
+        case say         // Claude wrote prose
+        case tool(String)
+        case result(Int) // line count of tool output
+        case subagent(String)
+    }
+
+    let id: Int
+    let at: Date
+    let kind: Kind
+    let detail: String
+
+    var glyph: String {
+        switch kind {
+        case .prompt: return "person.fill"
+        case .thinking: return "sparkles"
+        case .say: return "text.alignleft"
+        case .tool: return "wrench.and.screwdriver.fill"
+        case .result: return "arrow.turn.down.right"
+        case .subagent: return "person.2.fill"
+        }
+    }
+
+    var tag: String {
+        switch kind {
+        case .prompt: return "you"
+        case .thinking: return "think"
+        case .say: return "says"
+        case .tool(let n): return n
+        case .result: return ""
+        case .subagent(let n): return n
+        }
+    }
+}
+
+/// Everything parsed out of a session's transcript tail.
+struct ParsedTranscript: Equatable {
+    var title = ""
+    var lastPrompt = ""
+    var model = ""
+    var gitBranch = ""
+    var events: [ActivityEvent] = []
+    var contextTokens = 0
+    var outputTokens = 0
+    var toolCalls = 0
+    var promptCount = 0
+    var lastEventAt: Date?
+}
+
+/// One row of ~/.claude/sessions/<pid>.json
+struct RegistryEntry {
+    let pid: Int32
+    let sessionID: String
+    let name: String
+    let cwd: String
+    let startedAt: Date
+    let status: String
+    let statusUpdatedAt: Date
+    let version: String
+    let entrypoint: String
+}
+
+struct SessionSnapshot: Identifiable, Equatable {
+    var id: String { sessionID }
+
+    let pid: Int32
+    let sessionID: String
+    let name: String
+    let cwd: String
+    let startedAt: Date
+    let rawStatus: String
+    let statusUpdatedAt: Date
+    let version: String
+    let entrypoint: String
+    let transcript: URL?
+    let parsed: ParsedTranscript
+    let lastActivity: Date
+    let state: SessionState
+
+    init(reg: RegistryEntry, parsed: ParsedTranscript, transcript: URL?) {
+        self.pid = reg.pid
+        self.sessionID = reg.sessionID
+        self.name = reg.name
+        self.cwd = reg.cwd
+        self.startedAt = reg.startedAt
+        self.rawStatus = reg.status
+        self.statusUpdatedAt = reg.statusUpdatedAt
+        self.version = reg.version
+        self.entrypoint = reg.entrypoint
+        self.parsed = parsed
+        self.transcript = transcript
+
+        // Last sign of life from either the registry heartbeat or the transcript.
+        let activity = max(reg.statusUpdatedAt, parsed.lastEventAt ?? .distantPast)
+        self.lastActivity = activity
+
+        if reg.status == "busy" {
+            self.state = .working
+        } else {
+            self.state = Date().timeIntervalSince(activity) > 30 * 60 ? .dormant : .waiting
+        }
+    }
+
+    var projectName: String {
+        let base = (cwd as NSString).lastPathComponent
+        return base.isEmpty ? cwd : base
+    }
+
+    /// Short, friendly path: ~/Work/Stacked-Studios/network
+    var prettyPath: String {
+        let home = NSHomeDirectory()
+        return cwd.hasPrefix(home) ? "~" + cwd.dropFirst(home.count) : cwd
+    }
+
+    var headline: String {
+        if !parsed.title.isEmpty { return parsed.title }
+        if !parsed.lastPrompt.isEmpty { return parsed.lastPrompt.firstLine(max: 90) }
+        return "No activity yet"
+    }
+
+    /// The single most useful "what is it doing right now" line.
+    var currentActivity: ActivityEvent? {
+        // Prefer the newest tool call or prose while working; otherwise newest anything.
+        parsed.events.last
+    }
+
+    var surface: String {
+        switch entrypoint {
+        case "claude-vscode": return "VS Code"
+        case "claude-desktop": return "Desktop"
+        case let e where e.hasPrefix("claude-"): return String(e.dropFirst(7)).capitalized
+        default: return entrypoint.isEmpty ? "CLI" : entrypoint
+        }
+    }
+}
