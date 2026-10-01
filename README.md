@@ -1,4 +1,4 @@
-# Watchtower
+<img width="1280" height="640" alt="social-preview" src="https://github.com/user-attachments/assets/9047f111-087e-43f4-ad94-98f538686f5a" />
 
 [![Build](https://github.com/dazecoop/watchtower/actions/workflows/build.yml/badge.svg)](https://github.com/dazecoop/watchtower/actions/workflows/build.yml)
 ![Platform](https://img.shields.io/badge/platform-macOS%2014%2B-0A0A0C)
@@ -21,7 +21,7 @@ readout that sits flush against a screen edge, showing plan usage and whether
 anything is running. Click it to bring the dashboard back. With the notch on,
 Watchtower can run without a Dock icon at all.
 
-![The Watchtower dashboard in three of its six themes, with the notch on the screen edge](docs/screenshot.png)
+<img width="1830" height="1200" alt="screenshot" src="https://github.com/user-attachments/assets/70c7b0fb-d5ea-45ba-80ea-87c9fe1c2a4d" />
 
 ---
 
