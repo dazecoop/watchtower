@@ -71,10 +71,69 @@ struct VisualEffectBackground: NSViewRepresentable {
     }
 }
 
+/// Melds the title bar into the content: `toolbarBackground(.hidden)` drops the
+/// toolbar's own material and separator, but the strip behind it is still
+/// painted by the window, not the view. Making the title bar transparent and
+/// handing the window the theme's own colour — or clearing it so the content's
+/// vibrancy reaches up through `fullSizeContentView` — leaves one unbroken
+/// surface from the traffic lights down.
+struct WindowSurface: NSViewRepresentable {
+    let theme: Theme
+
+    func makeNSView(context: Context) -> NSView { NSView() }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        // The window isn't attached on the first layout pass.
+        DispatchQueue.main.async { apply(to: view.window) }
+    }
+
+    private func apply(to window: NSWindow?) {
+        guard let window else { return }
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.styleMask.insert(.fullSizeContentView)
+
+        if let style = theme.style {
+            window.backgroundColor = NSColor(style.window)
+            window.isOpaque = true
+        } else {
+            // Vibrancy themes draw their own `.behindWindow` effect view.
+            window.backgroundColor = .clear
+            window.isOpaque = false
+        }
+    }
+}
+
 extension Color {
     static let workingGreen = Color(red: 0.26, green: 0.80, blue: 0.47)
     static let waitingAmber = Color(red: 0.98, green: 0.70, blue: 0.22)
     static let dormantGray = Color(white: 0.52)
+
+    /// One fixed colour per plan limit, shared by the usage bar and the notch
+    /// rings so a given limit reads the same wherever you see it. Severity is
+    /// carried by the percentage text instead, which leaves these stable.
+    static func forLimit(_ index: Int) -> Color {
+        let palette: [Color] = [
+            Color(red: 0.26, green: 0.56, blue: 0.95),   // blue
+            Color(red: 0.58, green: 0.46, blue: 0.93),   // violet
+            Color(red: 0.90, green: 0.40, blue: 0.58),   // pink
+            Color(red: 0.13, green: 0.70, blue: 0.66)    // teal
+
+            // Nothing green: the notch's spinner is green, and a ring beside
+            // it in the same hue reads as part of the same indicator.
+        ]
+        return palette[((index % palette.count) + palette.count) % palette.count]
+    }
+
+    /// Red when a limit is critical, amber when it is close, otherwise nil —
+    /// callers fall back to their own resting colour.
+    static func forSeverity(_ level: Int) -> Color? {
+        switch level {
+        case 2: return Color(red: 0.95, green: 0.35, blue: 0.35)
+        case 1: return .waitingAmber
+        default: return nil
+        }
+    }
 
     static func forState(_ s: SessionState) -> Color {
         switch s {

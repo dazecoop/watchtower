@@ -133,6 +133,26 @@ private func storedBool(_ key: String, _ fallback: Bool) -> Bool {
         : UserDefaults.standard.bool(forKey: key)
 }
 
+/// Reads a stored number, falling back to a default when never set.
+private func storedDouble(_ key: String, _ fallback: Double) -> Double {
+    UserDefaults.standard.object(forKey: key) == nil
+        ? fallback
+        : UserDefaults.standard.double(forKey: key)
+}
+
+/// The notch used to be sized by a small/medium/large picker. Carry an
+/// existing choice over to the slider rather than resetting it.
+private func migratedOverlayScale() -> Double {
+    if UserDefaults.standard.object(forKey: "overlayScale") != nil {
+        return UserDefaults.standard.double(forKey: "overlayScale")
+    }
+    switch UserDefaults.standard.string(forKey: "overlaySize") {
+    case "small": return 0.85
+    case "large": return 1.2
+    default: return 1
+    }
+}
+
 enum SortMode: String, CaseIterable, Identifiable {
     case status = "Status"
     case recent = "Recent"
@@ -186,6 +206,78 @@ final class FleetStore: ObservableObject {
 
     @Published var query = "" {
         didSet { recomputeOrder(force: true) }
+    }
+
+    // MARK: Overlay
+
+    @Published var showOverlay = storedBool("showOverlay", false) {
+        didSet {
+            UserDefaults.standard.set(showOverlay, forKey: "showOverlay")
+            // The overlay is a live readout, so it needs the poll timer even
+            // when the main window is hidden or covered.
+            if showOverlay { startTimer() } else if !onScreen { stopTimer() }
+            applyActivationPolicy()
+        }
+    }
+
+    @Published var overlayEdge: OverlayEdge =
+        OverlayEdge(rawValue: UserDefaults.standard.string(forKey: "overlayEdge") ?? "") ?? .top {
+        didSet { UserDefaults.standard.set(overlayEdge.rawValue, forKey: "overlayEdge") }
+    }
+
+    /// 0…1 along the chosen edge. Set by the slider or by dragging the overlay.
+    @Published var overlayOffset = storedDouble("overlayOffset", 0.5) {
+        didSet { UserDefaults.standard.set(overlayOffset, forKey: "overlayOffset") }
+    }
+
+    /// Drives both the sweep out of the screen edge and the inner corner
+    /// radius, in points before the size scale is applied.
+    @Published var overlayRounding = storedDouble("overlayRounding", 17) {
+        didSet { UserDefaults.standard.set(overlayRounding, forKey: "overlayRounding") }
+    }
+
+    @Published var hideDockIcon = storedBool("hideDockIcon", false) {
+        didSet {
+            UserDefaults.standard.set(hideDockIcon, forKey: "hideDockIcon")
+            applyActivationPolicy()
+        }
+    }
+
+    /// Hiding the Dock icon also takes away the app menu, so something else
+    /// has to be able to summon the window. The notch or the menu bar item
+    /// will do; with neither, the app would be unreachable.
+    var canHideDockIcon: Bool {
+        showOverlay || UserDefaults.standard.bool(forKey: "showMenuBarExtra")
+    }
+
+    /// Enforced here rather than only in Settings: turning the notch and the
+    /// menu bar off afterwards would otherwise strand the app.
+    func applyActivationPolicy() {
+        let wanted: NSApplication.ActivationPolicy =
+            (hideDockIcon && canHideDockIcon) ? .accessory : .regular
+        guard NSApp.activationPolicy() != wanted else { return }
+        NSApp.setActivationPolicy(wanted)
+        if wanted == .regular { NSApp.activate(ignoringOtherApps: true) }
+    }
+
+    @Published var overlaySweep = storedBool("overlaySweep", true) {
+        didSet { UserDefaults.standard.set(overlaySweep, forKey: "overlaySweep") }
+    }
+
+    /// Set by `OverlayController`: whether the notch has reached the screen
+    /// corner at either end of its edge, in which case that end squares off so
+    /// it can sit right into the corner instead of curving away from it.
+    @Published private(set) var overlayFlushStart = false
+    @Published private(set) var overlayFlushEnd = false
+
+    func setOverlayFlush(start: Bool, end: Bool) {
+        guard start != overlayFlushStart || end != overlayFlushEnd else { return }
+        overlayFlushStart = start
+        overlayFlushEnd = end
+    }
+
+    @Published var overlayScale = migratedOverlayScale() {
+        didSet { UserDefaults.standard.set(overlayScale, forKey: "overlayScale") }
     }
 
     @Published private(set) var usage: UsageSnapshot?
@@ -265,10 +357,16 @@ final class FleetStore: ObservableObject {
 
     func start() {
         applyTheme()
+        applyActivationPolicy()
         refresh()
         refreshWindows()
         startTimer()
         observeVisibility()
+    }
+
+    private func stopTimer() {
+        timer?.invalidate()
+        timer = nil
     }
 
     private func startTimer() {
@@ -305,9 +403,8 @@ final class FleetStore: ObservableObject {
             refresh()
             refreshWindows()
             startTimer()
-        } else {
-            timer?.invalidate()
-            timer = nil
+        } else if !showOverlay {
+            stopTimer()
         }
     }
 

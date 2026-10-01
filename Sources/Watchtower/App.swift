@@ -3,6 +3,7 @@ import SwiftUI
 @main
 struct WatchtowerApp: App {
     @StateObject private var store = FleetStore()
+    @StateObject private var overlay = OverlayController()
 
     /// Deliberately @AppStorage rather than a store property: MenuBarExtra
     /// writes back to this binding while updating, which through an
@@ -10,10 +11,13 @@ struct WatchtowerApp: App {
     @AppStorage("showMenuBarExtra") private var showMenuBarExtra = false
 
     var body: some Scene {
-        WindowGroup("Watchtower") {
+        WindowGroup("Watchtower", id: AppWindow.id) {
             RootView()
                 .environmentObject(store)
-                .onAppear { store.start() }
+                .onAppear {
+                    store.start()
+                    overlay.attach(to: store)
+                }
         }
         .defaultSize(width: 1180, height: 820)
         .windowToolbarStyle(.unifiedCompact(showsTitle: false))
@@ -90,6 +94,10 @@ struct WatchtowerCommands: Commands {
                 store.activeOnly.toggle()
             }
             .keyboardShortcut("l", modifiers: .command)
+            Button(store.showOverlay ? "Hide Overlay" : "Show Overlay") {
+                store.showOverlay.toggle()
+            }
+            .keyboardShortcut("o", modifiers: [.command, .shift])
         }
     }
 }

@@ -16,7 +16,12 @@ of your plan you have used.
 
 It only ever reads. There is no way to send a message to a session from here.
 
-![Watchtower](docs/screenshot.png)
+When you don't need the whole dashboard, there is the **notch**: a small black
+readout that sits flush against a screen edge, showing plan usage and whether
+anything is running. Click it to bring the dashboard back. With the notch on,
+Watchtower can run without a Dock icon at all.
+
+![The Watchtower dashboard in three of its six themes, with the notch on the screen edge](docs/screenshot.png)
 
 ---
 
@@ -34,7 +39,7 @@ have never run Claude Code, there will be nothing to show.
   <img src="docs/download-macos.png" alt="Download for macOS" width="236">
 </a>
 
-1. Download `Watchtower-1.0.0.dmg` from the
+1. Download `Watchtower-1.1.0.dmg` from the
    [latest release](https://github.com/dazecoop/watchtower/releases/latest).
 2. Open it and drag **Watchtower** into **Applications**.
 3. Launch it.
@@ -93,7 +98,8 @@ Each session gets a tile:
 
 The strip along the bottom shows your plan limits — session, weekly, and any
 model-specific weekly limit — with a meter, a percentage and a reset countdown.
-Meters turn amber past 75% and red past 90%.
+Each limit keeps its own colour, the same one it has in the notch. The
+percentage turns amber past 75% and red past 90%.
 
 These figures come from the cache Claude Code keeps locally. Watchtower never
 contacts Anthropic itself, so the numbers refresh when Claude Code refreshes
@@ -116,6 +122,33 @@ whichever file is in front, so its title changes as you switch tabs and a saved
 link to it will stop resolving. Windows opened on a folder or workspace are
 stable.
 
+### The notch
+
+Turn it on in Settings and a small black readout sits flush against a screen
+edge of your choosing, above other windows and on every Space.
+
+It shows one ring per plan limit — each in the same colour it has in the usage
+bar — the most pressing percentage underneath, and the Claude mark in the
+middle. A green ring circles the mark while any session is mid-turn. Hover for
+the full breakdown: counts, every limit, and what the busiest session is doing.
+
+Click it to bring Watchtower forward. Drag it to slide it along its edge.
+
+It sweeps out of the screen edge and back again, MacBook-notch style, and you
+set how far. Slide it into a screen corner and it picks up a second sweep into
+the edge it has just met, so it sits in the corner rather than curving away
+from it. The sweep can be turned off entirely.
+
+**Credit where it's due.** The idea came from
+[Codenotch](https://github.com/vinzdg/codenotch), which pins a usage readout to
+a screen edge and covers several coding assistants at once — Claude, Cursor,
+Codex and others. I used it, liked it, and wanted something that went deeper on
+one of them rather than wider across all of them: Watchtower follows individual
+Claude Code sessions, so the notch is a way back into a dashboard of what each
+session is actually doing. This is a separate implementation written against
+that goal, not a port of theirs. If you want one widget covering several
+assistants' usage side by side, Codenotch is the better tool.
+
 ---
 
 ## Settings (⌘,)
@@ -128,6 +161,9 @@ stable.
 | **Thinking indicator** | Turn the animated status off if you prefer it still. |
 | **Notify when a session needs you** | A notification the moment a session stops working and starts waiting on your reply. The most useful setting here when several are running. |
 | **Menu bar status** | Off by default. Adds a working/waiting count to the menu bar with a jump-to menu. |
+| **Overlay** | The notch: on or off, which screen edge it sits on, where along that edge, and how big it is. |
+| **Rounding** | How far the notch sweeps out of the screen edge, and how much its inner corners are rounded. Both move together; the sweep can also be switched off. |
+| **Hide Dock icon** | Runs Watchtower in the background with no Dock icon and no app menu. Needs the notch or the menu bar status on first, since one of them has to be able to open the window again — otherwise the setting is greyed out, and turning both off later puts the Dock icon back. |
 
 The toolbar also has a filter field for narrowing by name, project or title,
 and a sort control: by status, most recent, or project.
@@ -139,6 +175,7 @@ and a sort control: by status, most recent, or project.
 | `⌘R` | Refresh now |
 | `⌘P` | Pause / resume live updates |
 | `⌘L` | Show active sessions only |
+| `⇧⌘O` | Show / hide the notch |
 | `⌘,` | Settings |
 
 ---

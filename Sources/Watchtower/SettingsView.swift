@@ -7,6 +7,8 @@ struct SettingsView: View {
         TabView {
             AppearanceSettings()
                 .tabItem { Label("Appearance", systemImage: "paintpalette") }
+            OverlaySettings()
+                .tabItem { Label("Overlay", systemImage: "rectangle.topthird.inset.filled") }
             BehaviourSettings()
                 .tabItem { Label("Behaviour", systemImage: "gearshape") }
         }
@@ -56,6 +58,74 @@ private struct AppearanceSettings: View {
     }
 }
 
+private struct OverlaySettings: View {
+    @EnvironmentObject var store: FleetStore
+
+    var body: some View {
+        Form {
+            Section("Floating overlay") {
+                Toggle("Show overlay", isOn: $store.showOverlay)
+                Text("A small always-on-top readout pinned to a screen edge, showing working and waiting counts, plan usage and the current activity. Click it to bring Watchtower forward.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Position") {
+                Picker("Edge", selection: $store.overlayEdge) {
+                    ForEach(OverlayEdge.allCases) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented)
+
+                HStack(spacing: 8) {
+                    Text(store.overlayEdge.ends.start)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Slider(value: $store.overlayOffset, in: 0...1)
+                    Text(store.overlayEdge.ends.end)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Text("You can also drag the overlay itself to slide it along its edge.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .disabled(!store.showOverlay)
+
+            Section("Size") {
+                HStack(spacing: 8) {
+                    Text("Small")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Slider(value: $store.overlayScale, in: 0.6...2)
+                    Text("Large")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .disabled(!store.showOverlay)
+
+            Section("Rounding") {
+                Toggle("Sweep out of the screen edge", isOn: $store.overlaySweep)
+                HStack(spacing: 8) {
+                    Text("Flat")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Slider(value: $store.overlayRounding, in: 0...60)
+                    Text("Round")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Text("Sets how far the notch sweeps out of the screen edge and how much its inner corners are rounded. An end that reaches a screen corner sweeps into the second edge instead.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .disabled(!store.showOverlay)
+        }
+        .formStyle(.grouped)
+    }
+}
+
 private struct BehaviourSettings: View {
     @EnvironmentObject var store: FleetStore
     @AppStorage("showMenuBarExtra") private var showMenuBarExtra = false
@@ -71,7 +141,18 @@ private struct BehaviourSettings: View {
 
             Section("Menu bar") {
                 Toggle("Show menu bar status", isOn: $showMenuBarExtra)
+                    .onChange(of: showMenuBarExtra) { _, _ in store.applyActivationPolicy() }
                 Text("Adds a count of working and waiting sessions to the menu bar, with a jump-to menu.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Dock") {
+                Toggle("Hide Dock icon", isOn: $store.hideDockIcon)
+                    .disabled(!store.canHideDockIcon)
+                Text(store.canHideDockIcon
+                     ? "Runs Watchtower in the background, with no Dock icon and no app menu. Open it from the notch or the menu bar."
+                     : "Turn on the notch or the menu bar status first. Hiding the Dock icon also hides the app menu, so without one of those there would be no way left to open Watchtower.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

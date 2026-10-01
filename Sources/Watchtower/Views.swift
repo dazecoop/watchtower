@@ -5,6 +5,8 @@ import SwiftUI
 struct RootView: View {
     @EnvironmentObject var store: FleetStore
 
+    @Environment(\.openWindow) private var openWindow
+
     private var columns: [GridItem] {
         if store.columnCount > 0 {
             return Array(repeating: GridItem(.flexible(minimum: 220), spacing: 14),
@@ -51,7 +53,10 @@ struct RootView: View {
         .environment(\.theme, store.theme)
         .environment(\.renderMarkdown, store.renderMarkdown)
         .environment(\.liveTicking, store.onScreen)
+        .background(WindowSurface(theme: store.theme))
+        .onAppear { AppWindow.reopen = { openWindow(id: AppWindow.id) } }
         .toolbar { toolbarItems }
+        .toolbarBackground(.hidden, for: .windowToolbar)
         .searchable(text: $store.query, placement: .toolbar, prompt: "Filter")
     }
 

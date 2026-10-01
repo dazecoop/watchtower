@@ -39,7 +39,7 @@ struct UsageBar: View {
                         .frame(height: 12)
                         .padding(.horizontal, detail == .minimal ? 9 : 14)
                 }
-                UsageMeter(limit: limit, detail: detail)
+                UsageMeter(limit: limit, index: index, detail: detail)
             }
 
             if freshness, let fetched = usage.fetchedAt {
@@ -66,15 +66,10 @@ struct UsageBar: View {
 
     fileprivate struct UsageMeter: View {
         let limit: UsageLimit
+        let index: Int
         let detail: Detail
 
-        private var tint: Color {
-            switch limit.level {
-            case 2: return Color(red: 0.95, green: 0.35, blue: 0.35)
-            case 1: return .waitingAmber
-            default: return Color(red: 0.32, green: 0.60, blue: 0.98)
-            }
-        }
+        private var tint: Color { .forLimit(index) }
 
         var body: some View {
             HStack(spacing: detail == .minimal ? 5 : 7) {
@@ -97,7 +92,8 @@ struct UsageBar: View {
 
                 Text("\(limit.percent)%")
                     .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(detail == .minimal ? tint : .primary.opacity(0.8))
+                    .foregroundStyle(Color.forSeverity(limit.level)
+                                     ?? (detail == .minimal ? tint : .primary.opacity(0.8)))
                     .fixedSize()
 
                 if detail == .full, let resets = limit.resetsAt {

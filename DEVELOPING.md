@@ -23,19 +23,37 @@ everything is SwiftUI and AppKit.
 | `AttentionNotifier.swift` | Working → waiting transition alerts. |
 | `Theme.swift` | Themes and the environment keys. |
 | `Views.swift` | Grid, tiles, feed lines, thinking indicator, shimmer. |
+| `Overlay.swift` | The notch: edge placement maths, the `NSPanel` that hosts it, dragging, and click-to-reveal. |
+| `OverlayView.swift` | Its contents — the notch outline, the concentric usage gauge and the spinner. |
+| `ClaudeMark.swift` | The Claude logomark as path commands (see below). |
 
 ### Generated images
 
-`docs/download-macos.png` and the app icon are drawn in code, not checked in as
-hand-made assets:
+Everything in `docs/` is produced from code, not checked in as hand-made art.
+
+`Resources/Capture.sh` takes the source captures: it runs the app in demo mode
+once per theme, parks the window on a Retina screen for 2x detail, and grabs
+the window and the notch by window id. Settings are passed as launch arguments
+rather than written to disk — macOS gives the argument domain priority over
+stored preferences, so a capture run never disturbs your own setup.
 
 ```bash
-swiftc -O Resources/MakeBadge.swift  -o /tmp/makebadge  && /tmp/makebadge docs/download-macos.png
-swiftc -O Resources/MakeSocial.swift -o /tmp/makesocial && /tmp/makesocial
+./build.sh                                   # Capture.sh shoots dist/Watchtower.app
+./Resources/Capture.sh /tmp/watchtower-shots
+
+swiftc -O Resources/MakeShowcase.swift -o /tmp/makeshowcase && /tmp/makeshowcase /tmp/watchtower-shots
+swiftc -O Resources/MakeSocial.swift   -o /tmp/makesocial   && /tmp/makesocial   /tmp/watchtower-shots
+swiftc -O Resources/MakeBadge.swift    -o /tmp/makebadge    && /tmp/makebadge docs/download-macos.png
 ```
 
+`MakeShowcase.swift` builds `docs/screenshot.png`, the README hero: one scene
+with the themed dashboards stacked on a desktop and the notch on its edge,
+rather than a single window, so the whole app is legible in one image.
+
 `MakeSocial.swift` builds `docs/social-preview.png`, the 1280x640 card GitHub
-serves as `og:image`. Committing it is not enough — GitHub only picks it up
+serves as `og:image`. It takes its artwork from the same captures rather than
+from `docs/screenshot.png`, which is light-backed and would sit badly on the
+card's dark gradient. Committing it is not enough — GitHub only picks it up
 once it is uploaded under **Settings → General → Social preview**, which has no
 API or CLI equivalent. Re-upload after regenerating.
 
@@ -46,8 +64,8 @@ whenever the generator is newer.
 
 `WT_DEMO=1` swaps the real data source for fabricated sessions in
 `DemoData.swift` — invented project names, folders and conversation text,
-covering all three states. That is how `docs/screenshot.png` is produced, so
-the README never exposes real project names or chat content:
+covering all three states. That is what `Capture.sh` runs, so the README art
+never exposes real project names or chat content:
 
 ```bash
 WT_DEMO=1 dist/Watchtower.app/Contents/MacOS/Watchtower
@@ -55,9 +73,60 @@ WT_DEMO=1 dist/Watchtower.app/Contents/MacOS/Watchtower
 
 The flag is read once at launch and is unreachable otherwise.
 
-### Two SwiftUI traps worth knowing
+### The notch
 
-Both cost real debugging time and are commented in place:
+A borderless, non-activating `NSPanel` at `.statusBar` level, with
+`canJoinAllSpaces` and `fullScreenAuxiliary` so it follows you between Spaces
+and stays visible over full-screen apps. It never becomes key or main — taking
+focus from whatever you are typing in to show a percentage would be rude.
+
+`OverlayPlacement` anchors it to the *physical* screen edge rather than
+`visibleFrame`, so showing or hiding the Dock does not shunt it sideways. The
+one exception is the top, which sits under the menu bar instead of over it.
+Position along the edge is a single 0…1 number, set by the slider in Settings
+or by dragging the notch itself.
+
+Dragging reads `NSEvent.mouseLocation` rather than the gesture's own
+translation: the panel moves as you drag, so a view-relative translation would
+feed back on itself. One `DragGesture` covers both jobs — a press that never
+travels opens the app, anything further moves it.
+
+`NotchShape` is built once with the edge along the top and then rotated into
+place, so the four edges cannot drift apart. The profile is the MacBook notch:
+flush along the screen edge, swelling out of it through a concave fillet at
+each end, rounded on the two corners facing into the screen. One `turn` helper
+draws every curve — convex corners and concave fillets differ only in which
+side of the curve the pivot sits on.
+
+When an end reaches a screen corner it is touching a *second* screen edge, so
+it stops sweeping back into the docked edge and sweeps out of the perpendicular
+one instead. That sweep needs depth rather than length, so the content reserves
+a strip on its inward side and hands the shape the same figure as `cornerSweep`
+— if the two disagreed, the shape would clamp while the padding kept growing
+and leave dead space. With the sweep switched off the construction degenerates
+to a square end on its own, with no special case.
+
+Size is a plain multiplier rather than a set of presets, and every measurement
+in `OverlayMetrics` derives from it — nothing is drawn at a fixed size and then
+scaled, which would resample the text and leave it soft. An existing
+small/medium/large choice is carried over to the slider on first run rather
+than being reset.
+
+`OverlayController` decides when an end counts as cornered, with two thresholds
+rather than one: squaring an end shortens the panel, which nudges the very
+measurement the decision was made from, and a single threshold would let it
+flip back and forth every frame.
+
+### The Claude logomark
+
+`ClaudeMark.swift` is generated from the official SVG, converted to absolute
+move / line / cubic commands normalised into a 0…1 square — elliptical arcs
+flattened to cubics on the way. That keeps the app drawing everything in code
+with no image resources, matching how the app icon is produced.
+
+### Four traps worth knowing
+
+All four cost real debugging time and are commented in place:
 
 1. **Scene generics.** Inlining the `commands` builder and a ViewBuilder
    `MenuBarExtra` label into `App.body` nested the opaque types deeply enough
@@ -68,6 +137,19 @@ Both cost real debugging time and are commented in place:
 2. **`MenuBarExtra(isInserted:)` writes back to its binding** while updating.
    Backed by an `@Published` store property that becomes an endless
    publish/render loop which pins the main thread. It is `@AppStorage`.
+
+3. **`NSHostingView.sizingOptions = [.intrinsicContentSize]`** is what measures
+   the notch's content so the panel can be sized to fit it — but it also leaves
+   the hosting view laying out against its own constraints rather than the
+   panel it now fills. The window renders completely empty. Its frame is
+   pinned explicitly after every `setFrame`.
+
+4. **Re-framing a panel on every publish makes it crawl.** The store publishes
+   once a second; comparing against `panel.frame` does not settle, because
+   AppKit may hand back an adjusted frame and that difference never resolves.
+   The controller compares against the frame it last *asked* for, and only
+   re-measures the content when a signature of the size-affecting values
+   changes — never for the cycling gerund or its timer.
 
 ## How it detects sessions
 
@@ -138,9 +220,12 @@ without a code change. Nothing is fetched from the network — Watchtower only
 reads what Claude Code has already cached, and re-parses the file only when its
 mtime changes.
 
-Meters turn amber past 75% and red past 90%, or earlier if the API marks a
-limit as warning/critical. If the cache hasn't been refreshed in 30 minutes the
-whole bar dims, rather than presenting stale numbers as current.
+Each limit has a fixed colour from `Color.forLimit(_:)`, shared with the notch
+rings so a limit reads the same in both places. Severity rides on the
+percentage text instead — amber past 75%, red past 90%, or earlier if the API
+marks a limit as warning/critical — which leaves the meter colours stable. If
+the cache hasn't been refreshed in 30 minutes the whole bar dims, rather than
+presenting stale numbers as current.
 
 ## What a tile spotlights
 
@@ -173,6 +258,32 @@ swap places constantly and the grid is unreadable. The order is only rewritten
 when no session has had activity for 30 seconds, or when you change the sort
 mode or the active-only filter yourself. New sessions are appended rather than
 inserted.
+
+## Running without a Dock icon
+
+**Hide Dock icon** switches the activation policy to `.accessory`. That also
+takes away the app menu, so something else has to be able to summon the window:
+the setting is only honoured while the notch or the menu bar item is on, and
+`applyActivationPolicy()` re-checks whenever either changes. Enforcing it there
+rather than only greying out the toggle matters — turning both off afterwards
+would otherwise strand the app with no way back to it.
+
+Clicking the notch brings the window forward, and reopens it if it was closed.
+Rebuilding a closed `WindowGroup` window is something only SwiftUI can do:
+`applicationShouldHandleReopen` is what a Dock click runs, but calling it does
+not bring the scene back, so `RootView` parks its `openWindow` action in
+`AppWindow.reopen` for the controller to use. The controller only calls it when
+no *visible* window is found — a closed window can linger in `NSApp.windows` as
+an off-screen husk, and treating that as the main window was why clicking the
+notch quietly did nothing.
+
+## Title bar
+
+The window has no separate title bar surface: `toolbarBackground(.hidden)`
+drops the toolbar's material and separator, and `WindowSurface` makes the title
+bar transparent and hands the window either the theme's own colour or a clear
+background so the content's vibrancy reaches up through `fullSizeContentView`.
+The result is one unbroken surface from the traffic lights down.
 
 ## Themes
 
