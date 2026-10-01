@@ -162,7 +162,7 @@ struct NotchShape: Shape {
 // MARK: - Root
 
 struct OverlayContent: View {
-    let controller: OverlayController
+    @ObservedObject var controller: OverlayController
 
     @EnvironmentObject private var store: FleetStore
 
@@ -193,6 +193,145 @@ struct OverlayContent: View {
     }
 
     var body: some View {
+        Group {
+            if controller.inflated {
+                morphing
+            } else {
+                face()
+            }
+        }
+        .onHover { hovering = $0 }
+        .gesture(moveOrOpen)
+        .help(controller.inflated ? "" : summary)
+    }
+
+    // MARK: Swell
+
+    /// The notch and the open panel are the same black shape at two sizes.
+    /// Rather than resize the window — which stutters, and clips whatever is
+    /// mid-flight — the panel is already at the open size by the time this
+    /// runs, and the shape springs between the two inside it.
+    ///
+    /// Everything is expressed along the edge and into the screen, then mapped
+    /// onto x and y at the end, so one set of rules covers all four edges: the
+    /// panel always grows out of the edge the notch is docked to, and about
+    /// the point the notch was sitting at.
+    private var morphing: some View {
+        let panel = controller.panelSize
+        let horizontal = store.overlayEdge.isHorizontal
+        let open = controller.expanded
+
+        let panelAlong = horizontal ? panel.width : panel.height
+        let panelDepth = horizontal ? panel.height : panel.width
+        let shutAlong = horizontal ? controller.collapsedSize.width : controller.collapsedSize.height
+        let shutDepth = horizontal ? controller.collapsedSize.height : controller.collapsedSize.width
+
+        let along = open ? panelAlong : shutAlong
+        let depth = open ? panelDepth : shutDepth
+
+        // Closed, the shape sits centred on where the notch was; open, it
+        // fills the panel. A notch near a screen corner opens off-centre, and
+        // the anchor is what keeps the two ends in step.
+        let originAlong = open
+            ? 0
+            : min(max(controller.anchorAlong - along / 2, 0), max(0, panelAlong - along))
+        // Bottom and right edges hang off the far side of the panel.
+        let far = store.overlayEdge == .bottom || store.overlayEdge == .right
+        let originDepth = far ? panelDepth - depth : 0
+
+        return ZStack(alignment: .topLeading) {
+            face(width: horizontal ? along : depth,
+                 height: horizontal ? depth : along)
+                .offset(x: horizontal ? originAlong : originDepth,
+                        y: horizontal ? originDepth : originAlong)
+        }
+        .frame(width: panel.width, height: panel.height, alignment: .topLeading)
+    }
+
+    /// The black body itself. Collapsed it is the gauge; open it is the fleet,
+    /// and the two cross-fade so neither ever has to squeeze into the other's
+    /// size on the way through.
+    ///
+    /// The size has to be imposed on the stack *before* the background, or the
+    /// shape fits itself to the gauge — which is fixed-size — and the swell
+    /// leaves a notch-sized bezel floating in an open panel.
+    /// What the notch opens into: a compact readout, or the whole grid.
+    @ViewBuilder
+    private var openBody: some View {
+        if store.overlayExpandStyle == .app {
+            // No way back to the window from here by design: the cog opens
+            // Settings and the notch stays the app. The panel shuts itself
+            // once the pointer leaves for the Settings window.
+            ExpandedAppPanel(onSettings: {
+                // A hop first: this gesture runs alongside the `SettingsLink`
+                // it sits on, and collapsing without the delay tears the link
+                // out of the view tree before its own action has run, so
+                // Settings never opens at all. One turn of the run loop is
+                // enough for the link to fire.
+                //
+                // Then shut in one step rather than springing, so the panel is
+                // gone before the Settings window arrives underneath it.
+                DispatchQueue.main.async {
+                    controller.collapse(animated: false)
+                    controller.raiseSettings()
+                }
+            })
+        } else {
+            ExpandedPanel(
+                onOpenApp: {
+                    controller.collapse()
+                    controller.revealApp()
+                },
+                onPick: { session in
+                    controller.collapse()
+                    store.focus(session)
+                }
+            )
+        }
+    }
+
+    /// The open content's own size: the panel less the fillets at each end,
+    /// which belong to the shape rather than to the list.
+    private var openSize: CGSize {
+        let panel = controller.panelSize
+        return store.overlayEdge.isHorizontal
+            ? CGSize(width: max(0, panel.width - m.flare * 2),
+                     height: max(0, panel.height - cornerSweep))
+            : CGSize(width: max(0, panel.width - cornerSweep),
+                     height: max(0, panel.height - m.flare * 2))
+    }
+
+    private func face(width: CGFloat? = nil, height: CGFloat? = nil) -> some View {
+        ZStack {
+            collapsedFace
+                .opacity(controller.expanded ? 0 : 1)
+
+            if controller.inflated {
+                openBody
+                    .environmentObject(store)
+                // Pinned to the size it will settle at, and clipped by the
+                // shape on the way there. Left to fit the shape as it springs
+                // it would re-wrap every frame, and the panel would arrive
+                // through a blur of truncating names.
+                .frame(width: openSize.width, height: openSize.height)
+                // Keep clear of the strip the shape reserves for a corner
+                // sweep, exactly as the collapsed face does.
+                .padding(store.overlayEdge.inward, cornerSweep)
+                .opacity(controller.expanded ? 1 : 0)
+                .allowsHitTesting(controller.expanded)
+            }
+        }
+        .frame(width: width, height: height)
+        .background {
+            // Pure black and unbordered, so it reads as bezel, not as a window.
+            shape.fill(Color.black)
+            shape.fill(Color.white.opacity(hovering && !controller.expanded ? 0.10 : 0))
+        }
+        .clipShape(shape)
+        .contentShape(shape)
+    }
+
+    private var collapsedFace: some View {
         VStack(spacing: round(2 * m.scale)) {
             UsageGauge(limits: limits, mood: fleet, metrics: m)
 
@@ -214,16 +353,6 @@ struct OverlayContent: View {
         // An end sitting in a screen corner sweeps into the perpendicular edge
         // instead, which needs depth rather than length.
         .padding(store.overlayEdge.inward, cornerSweep)
-        .background {
-            // Pure black and unbordered, so it reads as bezel, not as a window.
-            shape.fill(Color.black)
-            shape.fill(Color.white.opacity(hovering ? 0.10 : 0))
-        }
-        .clipShape(shape)
-        .contentShape(shape)
-        .onHover { hovering = $0 }
-        .gesture(moveOrOpen)
-        .help(summary)
     }
 
     /// Depth set aside for a corner sweep, and zero when neither end is in a
@@ -277,12 +406,23 @@ struct OverlayContent: View {
         return lines.joined(separator: "\n")
     }
 
+    /// What a click on the notch itself does. Inside the open full app it does
+    /// nothing: there you are clicking tiles, filters and the cog, and having
+    /// the panel shut under every one of those would make it unusable. The
+    /// summary is small enough that a click anywhere still closes it.
+    private func tapped() {
+        guard store.overlayExpands else { return controller.revealApp() }
+        if controller.expanded && store.overlayExpandStyle == .app { return }
+        controller.toggleExpanded()
+    }
+
     /// One gesture covers both jobs: a press that never travels opens the app,
     /// anything further moves the overlay. Two separate gestures would race.
     private var moveOrOpen: some Gesture {
         DragGesture(minimumDistance: 0, coordinateSpace: .global)
             .onChanged { value in
                 if !moved {
+                    guard !controller.expanded else { return }
                     guard hypot(value.translation.width, value.translation.height) > 3 else { return }
                     moved = true
                     controller.beginDrag()
@@ -290,7 +430,7 @@ struct OverlayContent: View {
                 controller.drag(to: NSEvent.mouseLocation)
             }
             .onEnded { _ in
-                if !moved { controller.revealApp() }
+                if !moved { tapped() }
                 controller.endDrag()
                 moved = false
             }

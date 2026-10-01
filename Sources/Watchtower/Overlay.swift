@@ -91,6 +91,37 @@ enum OverlayPlacement {
         return CGRect(origin: origin, size: size)
     }
 
+    /// Where the notch's centre sits along its edge, in screen coordinates.
+    /// The open panel grows about this point, so it reads as coming out of the
+    /// notch wherever the notch happens to be parked.
+    static func anchor(of frame: CGRect, edge: OverlayEdge) -> CGFloat {
+        edge.isHorizontal ? frame.midX : frame.midY
+    }
+
+    /// Frame for a panel of `size` swelling out of a notch centred on `anchor`.
+    /// It grows symmetrically about that point, then slides back onto the
+    /// screen if an end would overhang — a notch parked in a corner opens
+    /// along the screen rather than off it.
+    static func frame(size: CGSize, edge: OverlayEdge, anchoredAt anchor: CGFloat, screen: NSScreen) -> CGRect {
+        let (full, top) = bounds(screen)
+        let origin: CGPoint
+
+        if edge.isHorizontal {
+            let room = max(full.minX, full.maxX - size.width)
+            let x = min(max(anchor - size.width / 2, full.minX), room)
+            origin = CGPoint(x: x, y: edge == .top ? top - size.height : full.minY)
+        } else {
+            // Vertical edges are measured from the top down, so clamp the
+            // panel's upper edge between the usable top and the screen floor.
+            let highest = top
+            let lowest = max(full.minY + size.height, highest - max(0, (highest - full.minY) - size.height) - size.height)
+            let maxY = min(max(anchor + size.height / 2, min(lowest, highest)), highest)
+            origin = CGPoint(x: edge == .left ? full.minX : full.maxX - size.width,
+                             y: maxY - size.height)
+        }
+        return CGRect(origin: origin, size: size)
+    }
+
     /// The inverse, for dragging: which position puts the overlay's leading
     /// corner at `value` along the edge.
     static func offset(forOrigin value: CGFloat, size: CGSize, edge: OverlayEdge, screen: NSScreen) -> Double {
@@ -139,6 +170,29 @@ final class OverlayController: ObservableObject {
     /// when a drag starts so the overlay doesn't jump under the cursor.
     private var dragGrab: CGFloat?
 
+    // MARK: Expansion
+
+    /// Target state: what the content springs towards.
+    @Published private(set) var expanded = false
+    /// Whether the panel is currently holding the open size. It outlasts
+    /// `expanded` on the way closed, so the shape has somewhere to shrink
+    /// *into* instead of being clipped by a panel that already gave the
+    /// space back.
+    @Published private(set) var inflated = false
+
+    /// Published so the content can lay itself out against the real panel
+    /// rather than guessing: the open panel's size, and how far along the
+    /// edge the collapsed notch's centre sits inside it.
+    @Published private(set) var panelSize: CGSize = .zero
+    @Published private(set) var anchorAlong: CGFloat = 0
+    @Published private(set) var collapsedSize: CGSize = .zero
+
+    private var deflate: DispatchWorkItem?
+    private var settingsRaise: Timer?
+    private var pointerWatch: Timer?
+    private var awaySince: Date?
+    private var overSince: Date?
+
     func attach(to store: FleetStore) {
         guard self.store == nil else { return }
         self.store = store
@@ -165,10 +219,249 @@ final class OverlayController: ObservableObject {
         guard let store else { return }
         if store.showOverlay {
             show(store)
+            // Turning the swell off underneath an open panel would otherwise
+            // strand it at the open size with no way back.
+            if expanded && !store.overlayExpands { collapse() }
             reposition()
+            syncPointerWatch()
         } else {
             hide()
         }
+    }
+
+    // MARK: Expand / collapse
+
+    /// What a click on the notch does when the swell is switched on.
+    func toggleExpanded() {
+        expanded ? collapse() : expand()
+    }
+
+    func expand() {
+        guard !expanded,
+              let store, store.overlayExpands,
+              let panel, let screen else { return }
+
+        let collapsed = measuredSize ?? panel.frame.size
+        let anchor = OverlayPlacement.anchor(of: panel.frame, edge: store.overlayEdge)
+
+        // The summary is measured so it can't come up a row short; the full
+        // app scrolls, so it is simply given a generous slice of the screen.
+        let content = store.overlayExpandStyle == .app
+            ? OverlayExpansion.appSize(screen: screen)
+            : OverlayExpansion.contentSize(store: store)
+
+        // Room at each end for the fillets the notch sweeps out of, matching
+        // the padding the content view sets aside for them.
+        let metrics = OverlayMetrics(scale: CGFloat(store.overlayScale),
+                                     rounding: CGFloat(store.overlayRounding),
+                                     sweep: store.overlaySweep)
+        let ends = metrics.flare * 2
+        // An end parked in a screen corner sweeps into the perpendicular edge
+        // instead, which costs depth rather than length. The shape gives that
+        // strip up either way, so the panel has to be that much deeper or the
+        // last row lands underneath it.
+        let sweep = (store.overlayFlushStart || store.overlayFlushEnd) ? metrics.flare : 0
+
+        // The summary is authored at a fixed width running into the screen, so
+        // on a side edge that width becomes the panel's depth. The full app is
+        // authored at both dimensions and keeps them whichever edge it is on.
+        let along = store.overlayEdge.isHorizontal ? content.width : content.height
+        let depth = store.overlayEdge.isHorizontal ? content.height : content.width
+
+        let size = store.overlayEdge.isHorizontal
+            ? CGSize(width: max(along + ends, collapsed.width), height: depth + sweep)
+            : CGSize(width: depth + sweep, height: max(along + ends, collapsed.height))
+
+        let target = OverlayPlacement.frame(size: size,
+                                            edge: store.overlayEdge,
+                                            anchoredAt: anchor,
+                                            screen: screen).integral
+
+        collapsedSize = collapsed
+        panelSize = target.size
+        anchorAlong = store.overlayEdge.isHorizontal
+            ? anchor - target.minX
+            : target.maxY - anchor
+
+        deflate?.cancel()
+        // The panel takes the room first, with the content still drawn at the
+        // collapsed size and sitting exactly where the notch already was, so
+        // nothing jumps. The spring then runs inside a panel that is already
+        // big enough to hold it.
+        inflated = true
+        apply(frame: target)
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.inflated else { return }
+            withAnimation(OverlayExpansion.spring) { self.expanded = true }
+        }
+
+        syncPointerWatch()
+    }
+
+    /// Watches where the pointer actually is, which drives both halves of the
+    /// hover behaviour: resting on the notch opens it, and leaving the open
+    /// panel closes it again.
+    ///
+    /// SwiftUI's `onHover` can't be trusted for either: the panel never
+    /// becomes key, and swapping the collapsed body for the open one mid-
+    /// gesture re-enters the hover state without the mouse having moved, which
+    /// shut the panel the instant it opened. Asking the system for the pointer
+    /// has no such ambiguity.
+    ///
+    /// It runs while the panel is open, and while hover is the trigger and so
+    /// something has to notice the pointer arriving.
+    func syncPointerWatch() {
+        let wanted = panel != nil
+            && (expanded || (store?.overlayExpands == true
+                             && store?.overlayExpandTrigger == .hover))
+        guard wanted else { return stopPointerWatch() }
+        guard pointerWatch == nil else { return }
+
+        // Fine-grained, because the hover delay can be set to zero and a
+        // coarse timer would make "instant" feel like a quarter second.
+        pointerWatch = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.checkPointer() }
+        }
+    }
+
+    private func stopPointerWatch() {
+        pointerWatch?.invalidate()
+        pointerWatch = nil
+        awaySince = nil
+        overSince = nil
+    }
+
+    private func checkPointer() {
+        guard let panel, let store else { return stopPointerWatch() }
+
+        // A little slack around the edge, so grazing the boundary on the way
+        // to a row doesn't count as leaving.
+        let inside = panel.frame.insetBy(dx: -8, dy: -8).contains(NSEvent.mouseLocation)
+
+        if expanded {
+            overSince = nil
+            if inside {
+                awaySince = nil
+            } else if let since = awaySince {
+                if Date().timeIntervalSince(since) > 0.4 { collapse() }
+            } else {
+                awaySince = Date()
+            }
+            return
+        }
+
+        // Collapsed, and hover is what opens it.
+        awaySince = nil
+        guard store.overlayExpands, store.overlayExpandTrigger == .hover else {
+            overSince = nil
+            return
+        }
+
+        guard inside else {
+            overSince = nil
+            return
+        }
+        let since = overSince ?? Date()
+        overSince = since
+        if Date().timeIntervalSince(since) >= store.overlayHoverDelay { expand() }
+    }
+
+    /// Brings the Settings window to wherever you are.
+    ///
+    /// SwiftUI restores it to wherever it was last left, so with several
+    /// Spaces it opens on a different desktop, or behind what you are looking
+    /// at, or on a display that has since been unplugged. That is survivable
+    /// from the main window — there is a Dock icon and a menu to go find it —
+    /// but not from the notch in full-app mode, where the whole point is that
+    /// there is no window to go back to.
+    func raiseSettings() {
+        // `SettingsLink` opens the window some way down the line, and how far
+        // depends on how much there is to build — guessing a delay meant the
+        // sidebar's window appeared after the last guess had already run, and
+        // opened behind whatever was in front. Watch for it instead, and stop
+        // as soon as it is up.
+        settingsRaise?.invalidate()
+        let deadline = Date().addingTimeInterval(3)
+        settingsRaise = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: true) { [weak self] timer in
+            Task { @MainActor in
+                guard let self else { return timer.invalidate() }
+                if self.bringSettingsForward() || Date() > deadline { timer.invalidate() }
+            }
+        }
+    }
+
+    @discardableResult
+    private func bringSettingsForward() -> Bool {
+        guard let window = NSApp.windows.first(where: {
+            ($0.identifier?.rawValue ?? "").contains("SwiftUI_Settings") && $0.isVisible
+        }) else { return false }
+
+        // Have it follow you to this desktop, rather than Spaces switching
+        // out from under you to go to it.
+        window.collectionBehavior.insert(.moveToActiveSpace)
+
+        // A frame saved against a display that is no longer attached leaves it
+        // parked off the edge of everything.
+        if !NSScreen.screens.contains(where: { $0.visibleFrame.intersects(window.frame) }) {
+            window.center()
+        }
+
+        // Asking to be activated is not enough on its own. The click that got
+        // us here landed on a panel that refuses to activate the app, so macOS
+        // declines to hand over the foreground and the window opens behind
+        // whatever you were using. Ordering it front at a floating level puts
+        // it where it belongs regardless, and dropping back to normal a moment
+        // later leaves it at the front of the ordinary stack rather than
+        // hovering over everything for the rest of the session.
+        window.level = .floating
+        window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
+        NSApp.activate(ignoringOtherApps: true)
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            window.level = .normal
+        }
+        return true
+    }
+
+
+    /// `animated: false` shuts the panel in one step instead of springing it.
+    ///
+    /// Used when something else is about to appear in the same place: the
+    /// Settings window opens the instant the cog is clicked, and the notch
+    /// panel sits above it, so springing the panel closed over the next half
+    /// second left Settings arriving underneath a notch still on its way out.
+    /// Snapping shut first gets the order right — panel gone, then Settings.
+    func collapse(animated: Bool = true) {
+        guard expanded else { return }
+        stopPointerWatch()
+        deflate?.cancel()
+
+        guard animated else {
+            expanded = false
+            inflated = false
+            measuredFor = nil
+            appliedFrame = nil
+            reposition()
+            syncPointerWatch()
+            return
+        }
+
+        withAnimation(OverlayExpansion.spring) { expanded = false }
+
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, !self.expanded else { return }
+            self.inflated = false
+            // Hover mode still needs a watcher once the panel is shut.
+            self.syncPointerWatch()
+            // Re-fit to the collapsed body and park it back on its edge.
+            self.measuredFor = nil
+            self.appliedFrame = nil
+            self.reposition()
+        }
+        deflate = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + OverlayExpansion.settle, execute: work)
     }
 
     private func show(_ store: FleetStore) {
@@ -222,6 +515,11 @@ final class OverlayController: ObservableObject {
         appliedFrame = nil
         measuredSize = nil
         measuredFor = nil
+        deflate?.cancel()
+        deflate = nil
+        stopPointerWatch()
+        expanded = false
+        inflated = false
     }
 
     // MARK: Geometry
@@ -254,7 +552,12 @@ final class OverlayController: ObservableObject {
 
     /// Re-fits the panel to its content, then parks it on the chosen edge.
     private func reposition() {
-        guard let panel, let host, let store, let screen else { return }
+        // `apply(frame:)` owns the panel itself; this only works out where it
+        // should go.
+        guard let host, let store, let screen, panel != nil else { return }
+        // While the panel is open its frame is the expansion's to own; fitting
+        // it to the collapsed body would snap it shut mid-spring.
+        guard !inflated else { return }
 
         let key = signature(store)
         if measuredFor != key || measuredSize == nil {
@@ -283,9 +586,16 @@ final class OverlayController: ObservableObject {
         }
 
         guard target != appliedFrame else { return }
+        apply(frame: target)
+    }
+
+    /// Moves the panel without any implicit animation — AppKit would otherwise
+    /// turn a one-off reposition into a visible slide, and the swell is
+    /// animated by SwiftUI inside the panel rather than by the window itself.
+    private func apply(frame target: CGRect) {
+        guard let panel, let host else { return }
         appliedFrame = target
 
-        // Implicit animation here turns a one-off move into a visible slide.
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0
             context.allowsImplicitAnimation = false

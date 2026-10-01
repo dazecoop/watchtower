@@ -153,6 +153,37 @@ private func migratedOverlayScale() -> Double {
     }
 }
 
+/// What a swelled notch turns into.
+enum OverlayExpandStyle: String, CaseIterable, Identifiable {
+    /// A compact readout: counts, a line per session, plan usage.
+    case summary
+    /// The whole grid, tiles and all, inside the notch rather than in a window.
+    case app
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .summary: return "Summary"
+        case .app: return "Full app"
+        }
+    }
+}
+
+/// What makes a swelled notch open.
+enum OverlayExpandTrigger: String, CaseIterable, Identifiable {
+    case click, hover
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .click: return "Click"
+        case .hover: return "Hover"
+        }
+    }
+}
+
 enum SortMode: String, CaseIterable, Identifiable {
     case status = "Status"
     case recent = "Recent"
@@ -262,6 +293,31 @@ final class FleetStore: ObservableObject {
 
     @Published var overlaySweep = storedBool("overlaySweep", true) {
         didSet { UserDefaults.standard.set(overlaySweep, forKey: "overlaySweep") }
+    }
+
+    /// Click the notch to swell it into a panel in place, rather than bringing
+    /// the main window forward. Only reachable while the notch itself is on —
+    /// `SettingsView` disables the toggle, and `OverlayController` collapses
+    /// anything open if the notch is switched off underneath it.
+    @Published var overlayExpands = storedBool("overlayExpands", false) {
+        didSet { UserDefaults.standard.set(overlayExpands, forKey: "overlayExpands") }
+    }
+
+    @Published var overlayExpandTrigger: OverlayExpandTrigger =
+        OverlayExpandTrigger(rawValue: UserDefaults.standard.string(forKey: "overlayExpandTrigger") ?? "") ?? .click {
+        didSet { UserDefaults.standard.set(overlayExpandTrigger.rawValue, forKey: "overlayExpandTrigger") }
+    }
+
+    /// Seconds the pointer must rest on the notch before it opens. Zero is
+    /// instant; the slider stops at one second.
+    @Published var overlayHoverDelay = storedDouble("overlayHoverDelay", 0.25) {
+        didSet { UserDefaults.standard.set(overlayHoverDelay, forKey: "overlayHoverDelay") }
+    }
+
+    /// How much of Watchtower the open notch shows.
+    @Published var overlayExpandStyle: OverlayExpandStyle =
+        OverlayExpandStyle(rawValue: UserDefaults.standard.string(forKey: "overlayExpandStyle") ?? "") ?? .summary {
+        didSet { UserDefaults.standard.set(overlayExpandStyle.rawValue, forKey: "overlayExpandStyle") }
     }
 
     /// Set by `OverlayController`: whether the notch has reached the screen

@@ -233,6 +233,7 @@ struct SessionTile: View {
         .shadow(color: .black.opacity(0.12), radius: 7, y: 2)
         .shadow(color: session.state == .working ? Color.workingGreen.opacity(0.18) : .clear,
                 radius: 12, y: 0)
+        .modifier(AgeFade(session: session))
     }
 
     private var header: some View {
@@ -354,6 +355,31 @@ struct Shimmer: ViewModifier {
         content
             .overlay { if active, live { ShimmerSweep() } }
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+}
+
+/// Recedes a tile in proportion to how long it has been quiet, so a glance at
+/// the grid sorts live work from this morning's leftovers without reading a
+/// single timestamp.
+///
+/// Only dormant tiles carry a timeline, and it ticks once a minute: the fade
+/// spans hours, so there is nothing to see at a finer grain, and the closure
+/// re-applies one modifier to an already-built tile rather than rebuilding it.
+struct AgeFade: ViewModifier {
+    let session: SessionSnapshot
+
+    @Environment(\.liveTicking) private var live
+
+    func body(content: Content) -> some View {
+        Group {
+            if session.state == .dormant, live {
+                TimelineView(.periodic(from: wholeSecond(after: .now), by: 60)) { context in
+                    content.opacity(session.fade(at: context.date))
+                }
+            } else {
+                content.opacity(session.fade(at: Date()))
+            }
+        }
     }
 }
 

@@ -120,8 +120,29 @@ struct SessionSnapshot: Identifiable, Equatable {
         if reg.status == "busy" {
             self.state = .working
         } else {
-            self.state = Date().timeIntervalSince(activity) > 30 * 60 ? .dormant : .waiting
+            self.state = Date().timeIntervalSince(activity) > Self.dormantAfter ? .dormant : .waiting
         }
+    }
+
+    /// How long a quiet session waits before it reads as dormant rather than
+    /// as your turn to answer.
+    static let dormantAfter: TimeInterval = 30 * 60
+
+    /// A dormant tile keeps fading over this span, so the grid shows age at a
+    /// glance instead of one flat wall of idle.
+    static let fadeSpan: TimeInterval = 6 * 60 * 60
+    private static let fadeStart = 0.85
+    private static let fadeFloor = 0.40
+
+    /// Tile opacity: 1 while there is anything to say, stepping back to
+    /// `fadeStart` on going dormant and easing down to `fadeFloor` from there.
+    /// Eased so the first stretch of silence is the most visible change —
+    /// an hour quiet and a day quiet should not look alike.
+    func fade(at now: Date) -> Double {
+        guard state == .dormant else { return 1 }
+        let quiet = now.timeIntervalSince(lastActivity) - Self.dormantAfter
+        let progress = min(max(quiet / Self.fadeSpan, 0), 1)
+        return Self.fadeStart - (Self.fadeStart - Self.fadeFloor) * pow(progress, 0.6)
     }
 
     var projectName: String {

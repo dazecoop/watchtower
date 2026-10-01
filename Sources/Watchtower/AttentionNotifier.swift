@@ -9,7 +9,14 @@ final class AttentionNotifier {
     private var lastStates: [String: SessionState] = [:]
     private var primed = false
 
+    /// `UNUserNotificationCenter` throws rather than fails when the process
+    /// isn't inside an app bundle, taking the whole app down with it. That is
+    /// the case when the binary is run straight out of `.build` during
+    /// development, so notifications are skipped there instead.
+    private static let available = Bundle.main.bundleIdentifier != nil
+
     static func requestAuthorization() {
+        guard available else { return }
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
 
@@ -34,6 +41,8 @@ final class AttentionNotifier {
     }
 
     private func post(_ snapshot: SessionSnapshot) {
+        guard Self.available else { return }
+
         let content = UNMutableNotificationContent()
         content.title = "\(snapshot.name) needs you"
         content.body = snapshot.headline
