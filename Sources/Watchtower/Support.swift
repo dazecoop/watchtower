@@ -80,26 +80,48 @@ struct VisualEffectBackground: NSViewRepresentable {
 struct WindowSurface: NSViewRepresentable {
     let theme: Theme
 
-    func makeNSView(context: Context) -> NSView { NSView() }
+    func makeNSView(context: Context) -> SurfaceView { SurfaceView() }
 
-    func updateNSView(_ view: NSView, context: Context) {
-        // The window isn't attached on the first layout pass.
-        DispatchQueue.main.async { apply(to: view.window) }
+    func updateNSView(_ view: SurfaceView, context: Context) {
+        view.theme = theme
     }
 
-    private func apply(to window: NSWindow?) {
-        guard let window else { return }
-        window.titlebarAppearsTransparent = true
-        window.titleVisibility = .hidden
-        window.styleMask.insert(.fullSizeContentView)
+    /// Applies the window settings once per theme, rather than on every render.
+    ///
+    /// This used to re-apply them from an async hop on every `updateNSView`.
+    /// Setting `styleMask` and `backgroundColor` invalidates the window, which
+    /// brings on another render, which schedules another hop — a loop that
+    /// kept the window laying out when nothing had changed. The attachment
+    /// problem the hop was there to solve is what `viewDidMoveToWindow` is for.
+    final class SurfaceView: NSView {
+        var theme: Theme = .system {
+            didSet { applyIfNeeded() }
+        }
 
-        if let style = theme.style {
-            window.backgroundColor = NSColor(style.window)
-            window.isOpaque = true
-        } else {
-            // Vibrancy themes draw their own `.behindWindow` effect view.
-            window.backgroundColor = .clear
-            window.isOpaque = false
+        private var applied: Theme?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            applied = nil
+            applyIfNeeded()
+        }
+
+        private func applyIfNeeded() {
+            guard let window, applied != theme else { return }
+            applied = theme
+
+            window.titlebarAppearsTransparent = true
+            window.titleVisibility = .hidden
+            window.styleMask.insert(.fullSizeContentView)
+
+            if let style = theme.style {
+                window.backgroundColor = NSColor(style.window)
+                window.isOpaque = true
+            } else {
+                // Vibrancy themes draw their own `.behindWindow` effect view.
+                window.backgroundColor = .clear
+                window.isOpaque = false
+            }
         }
     }
 }

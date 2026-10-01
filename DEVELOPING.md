@@ -23,6 +23,7 @@ everything is SwiftUI and AppKit.
 | `AttentionNotifier.swift` | Working → waiting transition alerts. |
 | `Theme.swift` | Themes and the environment keys. |
 | `Views.swift` | Grid, tiles, feed lines, thinking indicator, shimmer. |
+| `Animations.swift` | The looping animations, as Core Animation layers (see Performance). |
 | `Overlay.swift` | The notch: edge placement maths, the `NSPanel` that hosts it, dragging, and click-to-reveal. |
 | `OverlayView.swift` | Its contents — the notch outline, the concentric usage gauge and the spinner. |
 | `ClaudeMark.swift` | The Claude logomark as path commands (see below). |
@@ -124,9 +125,9 @@ move / line / cubic commands normalised into a 0…1 square — elliptical arcs
 flattened to cubics on the way. That keeps the app drawing everything in code
 with no image resources, matching how the app icon is produced.
 
-### Four traps worth knowing
+### Five traps worth knowing
 
-All four cost real debugging time and are commented in place:
+All five cost real debugging time and are commented in place:
 
 1. **Scene generics.** Inlining the `commands` builder and a ViewBuilder
    `MenuBarExtra` label into `App.body` nested the opaque types deeply enough
@@ -138,13 +139,19 @@ All four cost real debugging time and are commented in place:
    Backed by an `@Published` store property that becomes an endless
    publish/render loop which pins the main thread. It is `@AppStorage`.
 
-3. **`NSHostingView.sizingOptions = [.intrinsicContentSize]`** is what measures
+3. **A `NSViewRepresentable` that configures its window** must do it from
+   `viewDidMoveToWindow`, not from an async hop in `updateNSView`.
+   `WindowSurface` did the latter: setting `styleMask` and `backgroundColor`
+   invalidates the window, which brings on another render, which schedules
+   another hop. The window kept laying out with nothing changed.
+
+4. **`NSHostingView.sizingOptions = [.intrinsicContentSize]`** is what measures
    the notch's content so the panel can be sized to fit it — but it also leaves
    the hosting view laying out against its own constraints rather than the
    panel it now fills. The window renders completely empty. Its frame is
    pinned explicitly after every `setFrame`.
 
-4. **Re-framing a panel on every publish makes it crawl.** The store publishes
+5. **Re-framing a panel on every publish makes it crawl.** The store publishes
    once a second; comparing against `panel.frame` does not settle, because
    AppKit may hand back an adjusted frame and that difference never resolves.
    The controller compares against the frame it last *asked* for, and only
@@ -329,7 +336,57 @@ The app does no work when you cannot see it. Hiding the window, minimising it
 or fully covering it with another window stops the poll timer and freezes every
 animation and per-second timer; it all resumes on the way back. Snapshots are
 equatable and only republished when something actually changed, so idle tiles
-are never re-laid out.
+are never re-laid out. The notch is the exception: it is a live readout, so
+leaving it on keeps the timer running whatever the window is doing.
+
+### Why the idle animations are Core Animation
+
+`Animations.swift` draws the breathing asterisk, the status-dot pulse, the
+shimmer sweep and the notch's spinner as `CALayer`s with `CABasicAnimation`,
+not as SwiftUI animations. This is the single most important thing in the app
+for CPU, and it is not a micro-optimisation.
+
+A running SwiftUI animation keeps `NSHostingView` needing layout, and AppKit
+then runs a **full view-graph render for the whole window on every display
+cycle** — 120 times a second on a ProMotion display. The cost has nothing to do
+with how small the animating thing is; it scales with how much is on screen.
+Isolating the animation in its own leaf view does not help, because the
+invalidation is at the hosting view, not the leaf.
+
+Measured on a 1512x950 window, six tiles, two of them working:
+
+| | CPU |
+| --- | --- |
+| SwiftUI animations | 18.5% |
+| the same animations as layers | 4.6% |
+| plus the per-second label fixes below | 3.6% |
+
+On a real nine-session fleet with the notch on, the same work took the app from
+roughly 53% of a core to under 2%.
+
+If you add another loop — anything with `repeatForever` in it — put it in
+`Animations.swift` as a layer. The pattern is small: an `NSView` subclass that
+builds one layer, adds one animation, and positions it in `layout()`. Note that
+an `NSViewRepresentable` has no size of its own in a SwiftUI stack, so each one
+is given an explicit `.frame` at the call site.
+
+### Per-second labels
+
+Every age label used to run its own one-second `TimelineView`. Two changes:
+
+`AgeSchedule` ticks once a second only while the label is still counting
+seconds, then on each minute boundary — a tile quiet for five hours was
+redrawing 3,600 times an hour to change nothing.
+
+All the remaining per-second schedules start from `wholeSecond(after:)` rather
+than their own `.now`, so they tick on the same instant. Scattered phases cost
+one window-wide layout pass each; in step they cost one between them.
+
+### Accessibility polling
+
+Walking another app's Window menu is synchronous IPC into that app. It runs on
+its own queue, and the result is only published when the list actually differs
+— reassigning an identical list re-rendered the whole grid every four seconds.
 
 ## Caveats
 

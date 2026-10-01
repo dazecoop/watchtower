@@ -292,6 +292,10 @@ final class FleetStore: ObservableObject {
 
     private let engine = FleetEngine()
     private let queue = DispatchQueue(label: "watchtower.io", qos: .utility)
+    /// Walking another app's Window menu is synchronous IPC into that app and
+    /// can block for tens of milliseconds. It has no business on the main
+    /// thread, where it stalled a frame every four seconds.
+    private let axQueue = DispatchQueue(label: "watchtower.ax", qos: .utility)
     private var timer: Timer?
     fileprivate var ticks = 0
 
@@ -414,21 +418,33 @@ final class FleetStore: ObservableObject {
 
         // Trust is cheap to check, so notice a granted permission immediately.
         let trusted = WindowFocuser.isTrusted
-        if trusted != axTrusted {
-            axTrusted = trusted
-            if trusted { editorWindows = WindowFocuser.windows() }
-        }
+        let gained = trusted != axTrusted
+        if gained { axTrusted = trusted }
 
         // Menu walking is comparatively slow, so poll it far less often.
         ticks += 1
-        if ticks % 4 == 0, trusted { editorWindows = WindowFocuser.windows() }
+        if trusted, gained || ticks % 4 == 0 { refreshWindows() }
     }
 
     // MARK: - Editor windows
 
+    /// Off the main thread, and only published when the list actually differs —
+    /// reassigning an identical list re-rendered the whole grid every four
+    /// seconds for nothing.
     func refreshWindows() {
-        axTrusted = WindowFocuser.isTrusted
-        editorWindows = WindowFocuser.windows()
+        let trusted = WindowFocuser.isTrusted
+        if trusted != axTrusted { axTrusted = trusted }
+        guard trusted else {
+            if !editorWindows.isEmpty { editorWindows = [] }
+            return
+        }
+        axQueue.async { [weak self] in
+            let found = WindowFocuser.windows()
+            Task { @MainActor in
+                guard let self, self.editorWindows != found else { return }
+                self.editorWindows = found
+            }
+        }
     }
 
     func requestAccessibility() {

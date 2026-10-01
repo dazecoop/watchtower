@@ -311,8 +311,6 @@ private struct UsageGauge: View {
     let mood: FleetMood
     let metrics: OverlayMetrics
 
-    @State private var spin = false
-
     var body: some View {
         ZStack {
             ForEach(Array(limits.enumerated()), id: \.element.id) { index, limit in
@@ -355,8 +353,6 @@ private struct UsageGauge: View {
         ClaudeMark()
             .fill(Color.white)
             .frame(width: metrics.mark, height: metrics.mark)
-            .onAppear { animate() }
-            .onChange(of: mood) { _, _ in animate() }
     }
 
     /// A thin arc tracking inside the gauge while a session is mid-turn — the
@@ -364,18 +360,9 @@ private struct UsageGauge: View {
     @ViewBuilder
     private var tracker: some View {
         if mood == .working {
-            Circle()
-                .trim(from: 0, to: 0.22)
-                .stroke(Color.workingGreen,
-                        style: StrokeStyle(lineWidth: metrics.spinner, lineCap: .round))
-                .rotationEffect(.degrees(spin ? 360 : 0))
+            // Core Animation, not a SwiftUI rotation — see `Animations.swift`.
+            SpinnerArc(lineWidth: metrics.spinner)
                 .padding(metrics.spinnerInset)
         }
-    }
-
-    private func animate() {
-        spin = false
-        guard mood == .working else { return }
-        withAnimation(.linear(duration: 2.6).repeatForever(autoreverses: false)) { spin = true }
     }
 }

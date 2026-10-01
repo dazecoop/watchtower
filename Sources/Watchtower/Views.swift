@@ -342,43 +342,17 @@ struct SessionTile: View {
 
 // MARK: - Pieces
 
-/// Ticks on its own so an otherwise unchanged tile doesn't have to re-render
-/// once a second just to advance this label.
 /// Sweeps a soft highlight across a block to signal it is still in progress.
+/// `ShimmerSweep` is a Core Animation layer — see `Animations.swift` for why
+/// none of these loops is a SwiftUI animation.
 struct Shimmer: ViewModifier {
     let active: Bool
 
     @Environment(\.liveTicking) private var live
-    @State private var phase: CGFloat = -1
 
     func body(content: Content) -> some View {
         content
-            .overlay {
-                if active, live {
-                    GeometryReader { geo in
-                        LinearGradient(
-                            stops: [
-                                .init(color: .clear, location: 0),
-                                .init(color: Color.primary.opacity(0.07), location: 0.45),
-                                .init(color: Color.primary.opacity(0.13), location: 0.50),
-                                .init(color: Color.primary.opacity(0.07), location: 0.55),
-                                .init(color: .clear, location: 1)
-                            ],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                        .frame(width: geo.size.width)
-                        .offset(x: phase * geo.size.width * 1.8)
-                    }
-                    .allowsHitTesting(false)
-                    .onAppear {
-                        withAnimation(.linear(duration: 2.4).repeatForever(autoreverses: false)) {
-                            phase = 1
-                        }
-                    }
-                    .onDisappear { phase = -1 }
-                }
-            }
+            .overlay { if active, live { ShimmerSweep() } }
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 }
@@ -391,7 +365,7 @@ struct RelativeAge: View {
     var body: some View {
         Group {
             if live {
-                TimelineView(.periodic(from: .now, by: 1)) { context in
+                TimelineView(AgeSchedule(since: since)) { context in
                     label(context.date)
                 }
             } else {
@@ -407,28 +381,49 @@ struct RelativeAge: View {
     }
 }
 
+/// Ticks once a second while the label is still counting seconds, then on each
+/// minute boundary. `shortDuration` drops to whole minutes after the first
+/// minute, so a tile that has been quiet for five hours was redrawing 3,600
+/// times an hour to change nothing — and with most of a fleet idle, those
+/// redraws were the bulk of what was left after the animations were fixed.
+struct AgeSchedule: TimelineSchedule {
+    let since: Date
+
+    func entries(from start: Date, mode: TimelineScheduleMode) -> AnyIterator<Date> {
+        var next = wholeSecond(after: start)
+        return AnyIterator {
+            let entry = next
+            let age = next.timeIntervalSince(since)
+            if age < 60 {
+                next = next.addingTimeInterval(1)
+            } else {
+                // Land on the minute so the label flips as it increments
+                // rather than up to a minute later.
+                next = since.addingTimeInterval((age / 60).rounded(.down) * 60 + 60)
+            }
+            return entry
+        }
+    }
+}
+
+/// The next whole second on the shared clock.
+///
+/// Every per-second label in the app starts from this rather than from its own
+/// `.now`, so they all tick on the same instant. Scattered phases cost one
+/// window-wide layout pass each; in step, they cost one between them.
+func wholeSecond(after date: Date) -> Date {
+    Date(timeIntervalSinceReferenceDate: date.timeIntervalSinceReferenceDate.rounded(.up))
+}
+
 struct StatusDot: View {
     let state: SessionState
 
     @Environment(\.liveTicking) private var live
-    @State private var pulsing = false
 
     var body: some View {
         ZStack {
             if state == .working, live {
-                // Core Animation drives this, rather than redrawing the view
-                // 20 times a second from a TimelineView.
-                Circle()
-                    .fill(Color.workingGreen.opacity(0.30))
-                    .frame(width: 22, height: 22)
-                    .scaleEffect(pulsing ? 1.0 : 0.45)
-                    .opacity(pulsing ? 0 : 0.85)
-                    .onAppear {
-                        withAnimation(.easeOut(duration: 1.6).repeatForever(autoreverses: false)) {
-                            pulsing = true
-                        }
-                    }
-                    .onDisappear { pulsing = false }
+                PulseRing().frame(width: PulseRing.diameter, height: PulseRing.diameter)
             }
             Circle()
                 .fill(Color.forState(state))
@@ -437,6 +432,7 @@ struct StatusDot: View {
         .frame(width: 22, height: 14)
     }
 }
+
 
 struct FeedLine: View {
     let event: ActivityEvent
@@ -540,39 +536,40 @@ struct ThinkingStrip: View {
     let seed: Int
 
     @Environment(\.liveTicking) private var live
-    @State private var breathing = false
 
     var body: some View {
-        // One tick a second is enough: the label only shows whole seconds.
-        TimelineView(.periodic(from: .now, by: live ? 1 : 3600)) { context in
-            let elapsed = max(0, context.date.timeIntervalSince(since))
-            let word = thinkingWords[(seed &+ Int(elapsed / 3)) % thinkingWords.count]
-
-            HStack(spacing: 6) {
+        HStack(spacing: 6) {
+            if live {
+                BreathingMark()
+                    .frame(width: BreathingMark.size.width, height: BreathingMark.size.height)
+            } else {
                 Image(systemName: "asterisk")
-                    .font(.system(size: 9, weight: .black))
+                    .font(.system(size: BreathingMark.pointSize, weight: .black))
                     .foregroundStyle(Color.workingGreen)
-                    .opacity(breathing ? 1 : 0.35)
-
-                Text(word + "…")
-                    .font(.system(size: 11, weight: .medium, design: .rounded))
-                    .foregroundStyle(.primary.opacity(0.78))
-
-                Text(shortDuration(elapsed))
-                    .font(.system(size: 9.5, design: .monospaced))
-                    .foregroundStyle(.tertiary)
-
-                Spacer(minLength: 0)
             }
-        }
-        .onAppear {
-            withAnimation(.easeInOut(duration: 0.75).repeatForever(autoreverses: true)) {
-                breathing = true
+
+            // One tick a second is enough: the label only shows whole seconds,
+            // and it is the only part of the strip that has to redraw.
+            TimelineView(.periodic(from: wholeSecond(after: .now), by: live ? 1 : 3600)) { context in
+                let elapsed = max(0, context.date.timeIntervalSince(since))
+                let word = thinkingWords[(seed &+ Int(elapsed / 3)) % thinkingWords.count]
+
+                HStack(spacing: 6) {
+                    Text(word + "…")
+                        .font(.system(size: 11, weight: .medium, design: .rounded))
+                        .foregroundStyle(.primary.opacity(0.78))
+
+                    Text(shortDuration(elapsed))
+                        .font(.system(size: 9.5, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                }
             }
+
+            Spacer(minLength: 0)
         }
-        .onDisappear { breathing = false }
     }
 }
+
 
 // MARK: - Empty state
 
