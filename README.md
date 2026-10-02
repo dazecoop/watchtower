@@ -27,6 +27,47 @@ Watchtower can run without a Dock icon at all.
 
 ---
 
+## What it does
+
+**Sees every session at once.** One tile per running Claude Code session:
+what it is working on, the last thing it said, whether it is mid-turn or
+waiting on you, and how full its context window is. Click a tile for the whole
+feed.
+
+**Tells you when it's your turn.** A tile goes amber the moment a session stops
+and waits on you — including when Claude stops to *ask* you something, which
+Claude Code itself still counts as busy. A notification goes out, the Dock icon
+gets a badge, and clicking the notification jumps to that editor window.
+
+**Keeps the Mac awake while Claude works.** Optional. A long run shouldn't
+stall because the machine dozed off, so Watchtower holds off idle sleep while
+any session is mid-turn and lets go the moment none is. The cup in the toolbar
+is lit while it is holding and dimmed while it is merely armed. See
+[keeping the Mac awake](#keeping-the-mac-awake).
+
+**Checks the internet actually works.** Optional. A dot in the toolbar and the
+notch: green when the internet is reachable, amber when you are connected to a
+network but nothing answers, red when there is no connection. The amber case is
+the one macOS is quietest about and the one that wastes the most time. See
+[connection check](#connection-check).
+
+<img src="docs/toolbar-status.png" alt="The toolbar: working and your-turn counts, the green connection dot, and the awake cup lit" width="560">
+
+**Lives in the notch, the menu bar, or neither.** A small black readout on a
+screen edge that swells open into a summary of the fleet or the whole
+dashboard, without a window coming forward; a menu bar item with a jump-to
+list and your plan limits; or run it with no Dock icon at all.
+
+<img src="docs/notch-summary.png" alt="The notch opened into its summary over the dashboard: one line per session and the plan limits" width="640">
+
+**Shows your plan usage.** Session, weekly and model-scoped limits with meters,
+percentages and reset countdowns, and an optional poll to keep them current.
+
+It only ever reads. There is no way to send a message to a session from here,
+and out of the box it makes no network requests at all.
+
+---
+
 ## Requirements
 
 - macOS 14 (Sonoma) or later — Apple silicon or Intel
@@ -41,7 +82,7 @@ have never run Claude Code, there will be nothing to show.
   <img src="docs/download-macos.png" alt="Download for macOS" width="236">
 </a>
 
-1. Download `Watchtower-1.4.0.dmg` from the
+1. Download `Watchtower-1.5.0.dmg` from the
    [latest release](https://github.com/dazecoop/watchtower/releases/latest).
 2. Open it and drag **Watchtower** into **Applications**.
 3. Launch it.
@@ -95,7 +136,33 @@ Each session gets a tile:
 - **Below that** is a live feed of recent steps: tool calls, their output, and
   anything you sent.
 - **The footer** shows the model, context tokens in flight, and how many tools
-  the session has run.
+  the session has run. The ring beside the token count is how much of the
+  model's context window is in use; it turns amber past 70% and red past 85%,
+  which is about where Claude Code compacts the conversation automatically.
+
+A few things the tile will tell you without being asked:
+
+- **While a tool is running**, the thinking indicator names it — *Running
+  Bash… 45s* — instead of a gerund, so a long command reads as what it is.
+- **When Claude stops to ask you something** (a question, or a plan waiting
+  for approval) the tile turns amber and reads *Your turn*, even though Claude
+  Code still counts the session as busy. The question itself is the
+  highlighted block.
+- **A tool call that failed** shows its line in red.
+
+### Looking closer
+
+Click a tile for the inspector: the whole feed Watchtower has for that
+session, with timestamps and full lines, plus the figures the footer only
+hints at — context used of the window available, how long the session has
+been open, prompts, tool calls, output tokens, the Claude Code version. Hover a
+line to unclip it; text is selectable. The footer reveals the project folder
+or the transcript in Finder, or copies the project path, the session id, or
+the transcript path.
+
+Right-click a tile for the same actions without opening anything, plus
+**Open in Terminal** and **Hide Until It Stirs**, which does for one idle
+session what Clean up does for all of them.
 
 ### Usage
 
@@ -154,10 +221,28 @@ This is not the same as the **⚡** filter, which hides idle sessions for as
 long as it is on. Clean up clears the ones in front of you now and leaves the
 next one alone.
 
+## Watching over the machine
+
+Two optional settings that reach beyond the window. Both are off by default,
+both are a single toggle under **Settings → Power & Network**, and both show
+their state in the toolbar and in the notch's header.
+
+### Keeping the Mac awake
+
+With it on, Watchtower holds off idle sleep
+while a session is mid-turn, so a long run doesn't stall because the machine
+dozed off. A small cup icon sits beside the connection dot: lit while it is
+holding, dimmed while it is merely armed.
+
+It lets go the moment nothing is working, so an idle Mac sleeps exactly as it
+normally would. It takes the same power assertion as `caffeinate -i`, so the
+display still sleeps on its usual schedule and closing the lid still suspends —
+only idle system sleep is deferred. Pausing updates releases it too, since a
+paused Watchtower has stopped watching what it would be holding on for.
+
 ### Connection check
 
-Optional, off by default. Turn it on and a dot appears in the toolbar and the
-notch:
+Turn it on and a dot appears in the toolbar and the notch:
 
 | | |
 | --- | --- |
@@ -174,18 +259,7 @@ Google, Quad9 and OpenDNS in rotation — notes whether it opened, and closes it
 Nothing is sent and nothing is read. A single failure is not treated as an
 outage: it tries a second, different resolver before changing the dot.
 
-### Keeping the Mac awake
-
-Also optional and off by default. With it on, Watchtower holds off idle sleep
-while a session is mid-turn, so a long run doesn't stall because the machine
-dozed off. A small cup icon sits beside the connection dot: lit while it is
-holding, dimmed while it is merely armed.
-
-It lets go the moment nothing is working, so an idle Mac sleeps exactly as it
-normally would. It takes the same power assertion as `caffeinate -i`, so the
-display still sleeps on its usual schedule and closing the lid still suspends —
-only idle system sleep is deferred. Pausing updates releases it too, since a
-paused Watchtower has stopped watching what it would be holding on for.
+## Getting around
 
 ### Jumping to a session
 
@@ -239,6 +313,8 @@ instant up to a second. And choose what it opens into:
   away. It always draws on the notch's black rather than your chosen theme,
   since anything lighter reads as a window sitting in the bezel.
 
+<img src="docs/notch-app.png" alt="The notch opened into the full dashboard, drawn on black, over the desktop" width="720">
+
 **Credit where it's due.** The idea came from
 [Codenotch](https://github.com/vinzdg/codenotch), which pins a usage readout to
 a screen edge and covers several coding assistants at once — Claude, Cursor,
@@ -285,7 +361,8 @@ Seven pages down the left.
 
 | | |
 | --- | --- |
-| **Notify when a session needs you** | A notification the moment a session stops working and starts waiting on your reply. The most useful setting here when several are running. |
+| **Notify when a session needs you** | A notification the moment a session stops working and starts waiting on your reply, or stops to ask you a question. Click it to jump to that session's editor window. The most useful setting here when several are running. If macOS has notifications for Watchtower switched off, the page says so and offers the way to System Settings. |
+| **Badge the Dock icon** | A count on the Dock icon while any session is your turn. On by default; cleared the moment nothing is waiting. |
 
 ### Power & Network
 
@@ -307,15 +384,18 @@ other, which is why they share a page.
 | --- | --- |
 | **Show menu bar status** | Off by default. Adds a working/waiting count to the menu bar with a jump-to menu. |
 | **Hide Dock icon** | Runs Watchtower in the background with no Dock icon and no app menu. Needs the notch or the menu bar status on first, since one of them has to be able to open the window again — otherwise the setting is greyed out, and turning both off later puts the Dock icon back. |
+| **Open at login** | Registers Watchtower as a login item. It appears under System Settings → General → Login Items too, where it can be removed without this app. |
 
 ### Permissions
 
 | | |
 | --- | --- |
-| **Accessibility** | Needed only by the reveal button that jumps to a session's editor window. Everything else works without it. Grant it from here, or from the banner in the window. |
+| **Accessibility** | Needed only by the reveal button that jumps to a session's editor window. Everything else works without it. Grant it from here, or from the banner in the window — which can be dismissed if you would rather not, and brought back from this page. |
+| **Notifications** | Whether macOS is letting Watchtower post them, with a shortcut to System Settings if not. |
 
 The toolbar also has a filter field for narrowing by name, project or title,
-and a sort control: by status, most recent, or project.
+and a sort control: by status, most recent, or project. The menu bar status,
+when it is on, lists your plan limits under the sessions.
 
 ### Keyboard
 
@@ -326,6 +406,7 @@ and a sort control: by status, most recent, or project.
 | `⌘L` | Show active sessions only |
 | `⇧⌘K` | Clean up idle sessions / bring them back |
 | `⇧⌘O` | Show / hide the notch |
+| `⌘1` – `⌘9` | Jump to the editor window of the first nine tiles, in the order they sit on screen |
 | `⌘,` | Settings |
 
 ---
@@ -427,6 +508,11 @@ so its title stays put.
 
 **Usage strip is dim or missing.** No Claude Code session has refreshed the
 usage cache recently. It fills in once one does.
+
+**A tile says *Your turn* while the editor says it is still working.** Claude
+has stopped to ask you something — look for the amber *asks* block. Claude
+Code counts the session as busy until you answer; Watchtower counts it as
+yours.
 
 ## Building from source
 

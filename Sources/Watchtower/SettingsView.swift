@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// The settings window's left-hand sections.
 ///
@@ -46,7 +47,10 @@ private enum SettingsPage: String, CaseIterable, Identifiable {
 struct SettingsView: View {
     @EnvironmentObject var store: FleetStore
 
-    @State private var page: SettingsPage = .appearance
+    /// Starts on Appearance, unless a launch argument says otherwise — which
+    /// is how `Capture.sh` photographs a given page without clicking around.
+    @State private var page: SettingsPage =
+        SettingsPage(rawValue: UserDefaults.standard.string(forKey: "settingsPage") ?? "") ?? .appearance
 
     var body: some View {
         // Pinned open: the pages are the whole navigation here and there is no
@@ -57,8 +61,21 @@ struct SettingsView: View {
                     .padding(.vertical, 5)
                     .tag(item)
             }
-            .navigationSplitViewColumnWidth(min: 168, ideal: 176, max: 200)
+            .navigationSplitViewColumnWidth(min: 196, ideal: 204, max: 230)
+            // Belt and braces: AppKit restores a saved sidebar width from
+            // an earlier build without consulting the minimum above, and the
+            // old width truncated two of the longer page names.
+            .frame(minWidth: 196)
             .toolbar(removing: .sidebarToggle)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                // Where people look for the version when filing a bug, and
+                // cheaper than an About box nobody opens.
+                Text("Watchtower \(AppInfo.version)")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.quaternary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+            }
         } detail: {
             Group {
                 switch page {
@@ -82,7 +99,7 @@ struct SettingsView: View {
             // height of an ordinary one.
             .toolbar(.hidden, for: .windowToolbar)
         }
-        .frame(width: 780, height: 560)
+        .frame(width: 820, height: 600)
     }
 }
 
@@ -262,7 +279,26 @@ private struct NotificationSettings: View {
         Form {
             Section("Alerts") {
                 Toggle("Notify when a session needs you", isOn: $store.notifyOnAttention)
-                Caption("Posts a notification the moment a session stops working and starts waiting on your reply.")
+                Caption("Posts a notification the moment a session stops working and starts waiting on your reply — or stops to ask you a question. Click it to jump to that session's editor window.")
+                if store.notifyOnAttention && store.notificationsDenied {
+                    HStack {
+                        Label("Notifications for Watchtower are turned off in System Settings", systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                            .font(.system(size: 11))
+                        Spacer()
+                        Button("Open System Settings") {
+                            if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") {
+                                NSWorkspace.shared.open(url)
+                            }
+                        }
+                        .controlSize(.small)
+                    }
+                }
+            }
+
+            Section("Dock") {
+                Toggle("Badge the Dock icon with sessions waiting on you", isOn: $store.badgeDock)
+                Caption("A count on the icon while any session is your turn, cleared the moment none is. Nothing is shown for idle sessions.")
             }
         }
     }
@@ -339,6 +375,17 @@ private struct DockMenuBarSettings: View {
                         ? "Runs Watchtower in the background, with no Dock icon and no app menu. Open it from the notch or the menu bar."
                         : "Turn on the notch or the menu bar status first. Hiding the Dock icon also hides the app menu, so without one of those there would be no way left to open Watchtower.")
             }
+
+            Section("Login") {
+                Toggle("Open Watchtower at login", isOn: $store.launchAtLogin)
+                    .disabled(!LoginItem.isAvailable)
+                Caption("Registers Watchtower as a login item. It also appears under System Settings → General → Login Items, where it can be removed without this app.")
+                if let problem = store.loginItemProblem {
+                    Label(problem, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                        .font(.system(size: 11))
+                }
+            }
         }
     }
 }
@@ -363,6 +410,35 @@ private struct PermissionSettings: View {
                     }
                 }
                 Caption("Only the reveal button on a tile needs this — the one that jumps to the editor window running a session. Everything else works without it, and Watchtower reads window titles, never their contents.")
+                if !store.axTrusted {
+                    Caption("If Watchtower is already listed in System Settings but still not trusted, remove it with the – button and add it again. An entry made against an older build no longer matches.")
+                }
+                if !store.axTrusted && store.hidePermissionBanner {
+                    Toggle("Show the reminder in the window", isOn: Binding(
+                        get: { !store.hidePermissionBanner },
+                        set: { store.hidePermissionBanner = !$0 }
+                    ))
+                }
+            }
+
+            Section("Notifications") {
+                if store.notificationsDenied {
+                    HStack {
+                        Caption("Turned off for Watchtower in System Settings.")
+                        Spacer()
+                        Button("Open System Settings…") {
+                            if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") {
+                                NSWorkspace.shared.open(url)
+                            }
+                        }
+                    }
+                } else {
+                    Label(store.notifyOnAttention ? "Alerts are on" : "Alerts are off",
+                          systemImage: store.notifyOnAttention ? "checkmark.circle.fill" : "bell.slash")
+                        .foregroundStyle(store.notifyOnAttention ? .green : .secondary)
+                        .font(.system(size: 11))
+                }
+                Caption("Used only to tell you a session has stopped and is waiting on you.")
             }
         }
     }

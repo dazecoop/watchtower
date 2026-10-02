@@ -470,7 +470,7 @@ final class OverlayController: ObservableObject {
         let content = AnyView(
             OverlayContent(controller: self)
                 .environmentObject(store)
-                .environment(\.theme, store.theme)
+                .environment(\.theme, OverlayExpansion.appTheme)
                 .environment(\.renderMarkdown, store.renderMarkdown)
                 // The overlay is on screen whenever it exists, so its timers
                 // and animations always run.
@@ -490,6 +490,11 @@ final class OverlayController: ObservableObject {
             defer: false
         )
         panel.contentView = host
+        // The notch is always black, whatever the window's theme, so its
+        // contents must always resolve for a dark ground. Left to inherit the
+        // app's appearance, the Light theme turned `.primary` black and the
+        // open panel became black text on a black bezel.
+        panel.appearance = NSAppearance(named: .darkAqua)
         panel.isFloatingPanel = true
         panel.hidesOnDeactivate = false
         panel.isOpaque = false

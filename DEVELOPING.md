@@ -26,6 +26,8 @@ everything is SwiftUI and AppKit.
 | `AttentionNotifier.swift` | Working → waiting transition alerts. |
 | `Theme.swift` | Themes and the environment keys. |
 | `Views.swift` | Grid, tiles, feed lines, thinking indicator, shimmer, the age fade. |
+| `Inspector.swift` | The popover a tile opens into, the context ring, the state pill, and the Finder/clipboard actions shared with the tile's context menu. |
+| `LoginItem.swift` | The `SMAppService` login item. |
 | `Animations.swift` | The looping animations, as Core Animation layers (see Performance). |
 | `Overlay.swift` | The notch: edge placement maths, the `NSPanel` that hosts it, dragging, click-to-reveal, and the expand/collapse lifecycle. |
 | `OverlayView.swift` | Its contents — the notch outline, the concentric usage gauge, the spinner, and the morphing geometry of the swell. |
@@ -51,6 +53,18 @@ swiftc -O Resources/MakeSocial.swift   -o /tmp/makesocial   && /tmp/makesocial  
 swiftc -O Resources/MakeBadge.swift    -o /tmp/makebadge    && /tmp/makebadge docs/download-macos.png
 ```
 
+`Resources/CaptureStates.sh` takes the README's state images: the toolbar
+with the connection dot and the awake cup lit, and the notch open as a summary
+and as the full app. The toolbar is a crop of one window capture. The two
+notch captures go to `MakeNotchScenes.swift`, which sets each on the same
+desktop as the hero, under a menu bar, so the image shows the open notch
+where it actually sits rather than as a cut-out. Nothing else is put on that
+desktop: a dashboard window behind the panel read as a second copy of the app.
+
+```bash
+./Resources/CaptureStates.sh            # writes straight into docs/
+```
+
 `MakeShowcase.swift` builds `docs/screenshot.png`, the README hero: one scene
 with the themed dashboards stacked on a desktop and the notch on its edge,
 rather than a single window, so the whole app is legible in one image.
@@ -64,6 +78,10 @@ API or CLI equivalent. Re-upload after regenerating.
 
 `build.sh` regenerates `Resources/AppIcon.png` from `Resources/MakeIcon.swift`
 whenever the generator is newer.
+
+`-settingsPage <appearance|notch|expanding|notifications|powerNetwork|dockMenuBar|permissions>`
+opens Settings on a given page, for the same reason: photographing a page
+without having to click to it.
 
 ### Demo mode
 
@@ -260,6 +278,43 @@ contain the folder name (a multi-root workspace might be `Untitled (Workspace)`)
 so when the match is ambiguous the button becomes a picker — choose the window
 once and it is remembered per project folder. Right-click a resolved button to
 re-link or forget it.
+
+## Questions, pending tools and context
+
+Three things are derived from the transcript rather than read from it:
+
+- **`awaitingAnswer`.** An `AskUserQuestion` or `ExitPlanMode` tool call is
+  recorded as an `ActivityEvent.Kind.question` rather than a tool. Claude Code
+  keeps the registry at `busy` until you answer, which is accurate for the
+  process and wrong for you — so `SessionSnapshot` reads a session whose newest
+  record is a question as *waiting*, not *working*. That also fires the
+  attention notification, which is the one moment it is most wanted. The
+  question text comes from the tool input's first `question`; a plan review
+  gets a fixed line.
+- **`pendingTool`.** If the newest record is a tool call, no result has
+  landed for it yet, so the tool is still running. The thinking strip names it
+  instead of cycling gerunds.
+- **`contextLimit`.** 200k, or 1M when the model id carries Claude Code's
+  `[1m]` suffix. `contextFraction` drives the ring in the footer and the
+  inspector; the amber and red thresholds sit just under Claude Code's
+  auto-compaction point, so the ring warns before the conversation loses
+  detail.
+
+A failed tool result keeps the `error:` prefix Claude Code's `is_error` flag
+gives it, and `ActivityEvent.isError` is what the views key the red off.
+
+## The inspector
+
+Clicking a tile opens `SessionInspector` in a popover. It looks the session up
+by id on every render rather than holding a copy, so it stays live while open
+and shows a quiet "ended" state if the process exits underneath it. The feed
+auto-scrolls to the newest record, and to the thinking strip while the session
+is working.
+
+Popovers are switched off inside the notch's full-app panel through the
+`inspectorEnabled` environment key: the panel never becomes key, and a popover
+anchored in it opens behind it or not at all. The context menu still works
+there.
 
 ## Reading a tile
 
@@ -534,7 +589,30 @@ The toolbar also has a filter field for narrowing by name, project or title.
 
 ## Shortcuts
 
-`⌘R` refresh · `⌘P` pause/resume · `⌘L` active-only · `⇧⌘K` clean up idle
+`⌘R` refresh · `⌘P` pause/resume · `⌘L` active-only · `⇧⌘K` clean up idle ·
+`⌘1`–`⌘9` jump to the nth tile's editor window
+
+The jump items live in their own `Session` menu and their own `JumpItems` type,
+for the same scene-generics reason as everything else in `App.swift`. They
+index `visible`, which is the order on screen — the grid holding its order
+while work happens is what keeps a number meaning the same tile.
+
+## Notifications, badge and login item
+
+`AttentionNotifier` is the `UNUserNotificationCenter` delegate, set in its own
+init so a click on a notification is routed back through `onActivate` to
+`FleetStore.focus`. Requests use the session id as both identifier and thread,
+so a session flapping between states replaces its own alert rather than
+stacking a column of them.
+
+The Dock badge is `NSApp.dockTile.badgeLabel`, decided in one place
+(`applyDockBadge`) from `waitingCount`, and only reassigned when it changes.
+
+Open at login is `SMAppService.mainApp`. `launchAtLogin` mirrors the service's
+status rather than storing a flag of its own, because System Settings can
+change it behind the app's back; a failed register reverts the toggle and
+surfaces the reason, most often that the user has to approve the app under
+Login Items.
 
 ## Signing
 

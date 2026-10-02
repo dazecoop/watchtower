@@ -178,6 +178,12 @@ final class TranscriptTail {
                 if raw == "Task" || raw == "Agent" {
                     let sub = input["subagent_type"] as? String ?? "agent"
                     append(at: at, kind: .subagent(sub), detail: summarize(tool: raw, input: input))
+                } else if raw == "AskUserQuestion" {
+                    // Claude stops here until you answer, so this is your
+                    // turn in all but the registry's bookkeeping.
+                    append(at: at, kind: .question, detail: questionText(input))
+                } else if raw == "ExitPlanMode" {
+                    append(at: at, kind: .question, detail: "Plan is ready for your review")
                 } else {
                     append(at: at, kind: .tool(name), detail: summarize(tool: raw, input: input))
                 }
@@ -228,6 +234,16 @@ final class TranscriptTail {
             return arr.compactMap { $0["text"] as? String }.joined(separator: "\n")
         }
         return ""
+    }
+
+    /// The first question Claude is asking, which is what the tile should show
+    /// while it waits. Several questions are summarised as a count.
+    private func questionText(_ input: [String: Any]) -> String {
+        let questions = input["questions"] as? [[String: Any]] ?? []
+        let texts = questions.compactMap { ($0["question"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard let first = texts.first else { return "Waiting for your answer" }
+        return texts.count > 1 ? "\(first.clipped(220))  (+\(texts.count - 1) more)" : first.clipped(300)
     }
 
     /// Pull the one field from a tool's input that says what it is acting on.

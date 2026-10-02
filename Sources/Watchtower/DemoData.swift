@@ -60,6 +60,8 @@ enum DemoData {
         parsed.toolCalls = tools
         parsed.events = events
         parsed.lastEventAt = events.last?.at
+        parsed.promptCount = max(1, tools / 6)
+        parsed.outputTokens = tools * 1_900
 
         return SessionSnapshot(reg: entry, parsed: parsed, transcript: nil)
     }
@@ -108,13 +110,14 @@ enum DemoData {
             session(
                 name: "mobile-app-d2", folder: "mobile-app", branch: "feat/typed-routes",
                 title: "Migrate navigation to typed routes",
-                model: "claude-opus-5", context: 211_000, tools: 54,
-                busy: false, idleFor: 520,
+                model: "claude-opus-5", context: 171_000, tools: 54,
+                busy: true, idleFor: 520,
                 events: [
                     event(900, .tool("Bash"), "npx tsc --noEmit"),
                     event(780, .result(31), "31 errors"),
                     event(640, .subagent("explore"), "Find every navigation.navigate call"),
-                    event(530, .say, "Down to three errors, all in the onboarding stack where routes take optional params. I've left those as-is — making them required would change behaviour, so that's your call.")
+                    event(530, .say, "Down to three errors, all in the onboarding stack where routes take optional params."),
+                    event(500, .question, "Should the onboarding routes' optional params become required? It changes behaviour for deep links.")
                 ]
             ),
             session(
@@ -123,6 +126,8 @@ enum DemoData {
                 model: "claude-sonnet-5-5", context: 62_000, tools: 23,
                 busy: false, idleFor: 3600 * 2.4,
                 events: [
+                    event(9400, .tool("Bash"), "python backfill.py --dry-run --since 2026-01"),
+                    event(9200, .result(4), "error: psycopg2.OperationalError: connection timed out"),
                     event(9000, .tool("Bash"), "python backfill.py --dry-run"),
                     event(8800, .result(18), "would write 1,284,003 rows"),
                     event(8600, .say, "Dry run looks right. Holding before the real run — it's a couple of hours of writes.")

@@ -196,6 +196,14 @@ enum SortMode: String, CaseIterable, Identifiable {
     case recent = "Recent"
     case project = "Project"
     var id: String { rawValue }
+
+    var symbol: String {
+        switch self {
+        case .status: return "circle.lefthalf.filled"
+        case .recent: return "clock"
+        case .project: return "folder"
+        }
+    }
 }
 
 @MainActor
@@ -243,6 +251,14 @@ final class FleetStore: ObservableObject {
         for session in listed where session.state == .dormant {
             dismissed[session.id] = session.lastActivity
         }
+        recomputeOrder(force: true)
+    }
+
+    /// Hides one idle session, on the same terms as a clean-up: it comes back
+    /// the moment it stirs.
+    func hide(_ session: SessionSnapshot) {
+        guard session.state == .dormant else { return }
+        dismissed[session.id] = session.lastActivity
         recomputeOrder(force: true)
     }
 
@@ -368,7 +384,58 @@ final class FleetStore: ObservableObject {
         didSet {
             UserDefaults.standard.set(notifyOnAttention, forKey: "notifyOnAttention")
             if notifyOnAttention { AttentionNotifier.requestAuthorization() }
+            checkNotificationAccess()
         }
+    }
+
+    /// Whether macOS has notifications for Watchtower switched off, so the
+    /// settings page can say why the alert toggle is doing nothing.
+    @Published private(set) var notificationsDenied = false
+
+    func checkNotificationAccess() {
+        guard notifyOnAttention else { notificationsDenied = false; return }
+        AttentionNotifier.authorizationDenied { [weak self] denied in
+            Task { @MainActor in self?.notificationsDenied = denied }
+        }
+    }
+
+    /// A number on the Dock icon for sessions waiting on you — the quietest
+    /// way macOS has of saying something needs attention, and the one people
+    /// already know how to read.
+    @Published var badgeDock = storedBool("badgeDock", true) {
+        didSet {
+            UserDefaults.standard.set(badgeDock, forKey: "badgeDock")
+            applyDockBadge()
+        }
+    }
+
+    private func applyDockBadge() {
+        let wanted = badgeDock && waitingCount > 0 ? "\(waitingCount)" : nil
+        guard NSApp.dockTile.badgeLabel != wanted else { return }
+        NSApp.dockTile.badgeLabel = wanted
+    }
+
+    /// Mirrors `SMAppService` rather than a stored flag: the system owns this
+    /// setting, and the user can change it in System Settings → Login Items
+    /// behind the app's back.
+    @Published var launchAtLogin = LoginItem.isEnabled {
+        didSet {
+            guard launchAtLogin != LoginItem.isEnabled else { return }
+            if let problem = LoginItem.set(launchAtLogin) {
+                loginItemProblem = problem
+                launchAtLogin = LoginItem.isEnabled
+            } else {
+                loginItemProblem = nil
+            }
+        }
+    }
+
+    @Published private(set) var loginItemProblem: String?
+
+    /// The Accessibility banner can be put away. Declining the permission is a
+    /// legitimate choice, and a strip nagging about it forever is not.
+    @Published var hidePermissionBanner = storedBool("hidePermissionBanner", false) {
+        didSet { UserDefaults.standard.set(hidePermissionBanner, forKey: "hidePermissionBanner") }
     }
 
     /// 0 means "fit as many as the width allows".
@@ -635,12 +702,26 @@ final class FleetStore: ObservableObject {
     func start() {
         applyTheme()
         applyActivationPolicy()
+        // Clicking a "needs you" notification jumps to that session's editor
+        // window — the same thing the tile's reveal button does.
+        AttentionNotifier.shared.onActivate = { [weak self] sessionID in
+            guard let self, let session = self.sessions.first(where: { $0.id == sessionID }) else { return }
+            self.focus(session)
+        }
+        if notifyOnAttention { AttentionNotifier.requestAuthorization() }
+        checkNotificationAccess()
         refresh()
         refreshWindows()
         startTimer()
         observeVisibility()
         applyReachability()
         applyUsagePolling()
+    }
+
+    /// The nth tile on screen, for the ⌘1–⌘9 shortcuts.
+    func focus(index: Int) {
+        guard visible.indices.contains(index) else { return }
+        focus(visible[index])
     }
 
     private func stopTimer() {
@@ -767,6 +848,7 @@ final class FleetStore: ObservableObject {
             sessions = DemoData.sessions
             usage = DemoData.usage
             recomputeOrder()
+            applyDockBadge()
             return
         }
 
@@ -788,6 +870,7 @@ final class FleetStore: ObservableObject {
                 if self.usage != merged { self.usage = merged }
                 if changed || self.ticks % 10 == 0 { self.recomputeOrder() }
                 self.applySleepGuard()
+                if changed { self.applyDockBadge() }
                 self.lastRefresh = Date()
             }
         }

@@ -24,7 +24,7 @@ struct RootView: View {
             }
 
             VStack(spacing: 0) {
-                if !store.axTrusted {
+                if !store.axTrusted && !store.hidePermissionBanner {
                     PermissionBanner()
                     Divider().opacity(0.4)
                 }
@@ -68,14 +68,24 @@ struct RootView: View {
             HStack(spacing: 8) {
                 if store.workingCount > 0 {
                     CountPill(count: store.workingCount, label: "working", color: .workingGreen)
+                        .help("\(store.workingCount) session\(store.workingCount == 1 ? " is" : "s are") mid-turn")
                 }
                 if store.waitingCount > 0 {
                     CountPill(count: store.waitingCount, label: "your turn", color: .waitingAmber)
+                        .help("\(store.waitingCount) session\(store.waitingCount == 1 ? " is" : "s are") waiting on you")
                 }
                 if store.workingCount == 0 && store.waitingCount == 0 {
                     Text("\(store.sessions.count) session\(store.sessions.count == 1 ? "" : "s")")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
+                }
+
+                // Pausing is easy to forget. A dormant-looking grid with no
+                // sign it has stopped updating is a grid you stop trusting.
+                if store.paused {
+                    CountPill(count: nil, label: "paused", color: .dormantGray)
+                        .help("Live updates are paused — press ⌘P to resume")
+                        .transition(.opacity.combined(with: .scale(scale: 0.9)))
                 }
 
                 if store.checkInternet {
@@ -96,21 +106,29 @@ struct RootView: View {
                               : "Will keep this Mac awake once a session starts working")
                 }
             }
+            .animation(.easeOut(duration: 0.2), value: store.paused)
         }
 
         ToolbarItemGroup(placement: .primaryAction) {
-            Picker("Sort", selection: $store.sortMode) {
-                ForEach(SortMode.allCases) { Text($0.rawValue).tag($0) }
+            // A menu with a checkmark rather than a pop-up button: the toolbar
+            // is icons, and a text pop-up sat among them like a form control.
+            Menu {
+                Picker("Sort by", selection: $store.sortMode) {
+                    ForEach(SortMode.allCases) { mode in
+                        Label(mode.rawValue, systemImage: mode.symbol).tag(mode)
+                    }
+                }
+                .pickerStyle(.inline)
+            } label: {
+                Image(systemName: "arrow.up.arrow.down")
             }
-            .pickerStyle(.menu)
-            .labelsHidden()
-            .frame(width: 104)
+            .help("Sort tiles by \(store.sortMode.rawValue.lowercased())")
 
             Toggle(isOn: $store.activeOnly) {
                 Image(systemName: "bolt.fill")
             }
             .toggleStyle(.button)
-            .help("Hide idle sessions")
+            .help(store.activeOnly ? "Showing active sessions only" : "Hide idle sessions")
 
             // Clears idle sessions out of the app only — nothing is sent to
             // the sessions themselves, and any that stirs comes back on its own.
@@ -135,7 +153,7 @@ struct RootView: View {
             } label: {
                 Image(systemName: store.theme == .light ? "sun.max.fill" : "moon.fill")
             }
-            .help("Theme")
+            .help("Theme: \(store.theme.label)")
 
             Button {
                 store.paused.toggle()
@@ -153,16 +171,17 @@ struct RootView: View {
 }
 
 private struct CountPill: View {
-    let count: Int
+    let count: Int?
     let label: String
     let color: Color
 
     var body: some View {
         HStack(spacing: 5) {
             Circle().fill(color).frame(width: 6, height: 6)
-            Text("\(count) \(label)")
+            Text(count.map { "\($0) \(label)" } ?? label)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.secondary)
+                .monospacedDigit()
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 3)
@@ -177,7 +196,12 @@ struct SessionTile: View {
 
     @EnvironmentObject private var store: FleetStore
     @Environment(\.theme) private var theme
+    @Environment(\.colorScheme) private var scheme
     @Environment(\.renderMarkdown) private var markdown
+    @Environment(\.inspectorEnabled) private var inspectorEnabled
+
+    @State private var hovering = false
+    @State private var inspecting = false
 
     private var events: [ActivityEvent] { session.parsed.events }
 
@@ -186,7 +210,7 @@ struct SessionTile: View {
     /// the first line of a `gh pr checks` dump, say — which reads as a mismatch
     /// against what the editor's chat panel is showing.
     private var newest: ActivityEvent? {
-        events.last(where: isProse) ?? events.last
+        events.last(where: isSpotlight) ?? events.last
     }
 
     private var prior: [ActivityEvent] {
@@ -201,9 +225,9 @@ struct SessionTile: View {
         return event.tag
     }
 
-    private func isProse(_ event: ActivityEvent) -> Bool {
+    private func isSpotlight(_ event: ActivityEvent) -> Bool {
         switch event.kind {
-        case .say, .prompt: return true
+        case .say, .prompt, .question: return true
         default: return false
         }
     }
@@ -219,13 +243,19 @@ struct SessionTile: View {
         abs(session.sessionID.unicodeScalars.reduce(0) { ($0 &* 31 &+ Int($1.value)) & 0xffff })
     }
 
+    private var borderColor: Color {
+        if session.state == .working { return Color.workingGreen.opacity(hovering ? 0.65 : 0.50) }
+        let resting = theme.style?.border ?? Color.primary.opacity(0.13)
+        return hovering ? Color.primary.opacity(0.26) : resting
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             header
             headline
 
             if isThinking {
-                ThinkingStrip(since: thinkingSince, seed: seed)
+                ThinkingStrip(since: thinkingSince, seed: seed, pending: session.parsed.pendingTool)
                     .padding(.leading, 2)
             }
 
@@ -256,17 +286,56 @@ struct SessionTile: View {
         }
         .overlay {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(
-                    session.state == .working
-                        ? Color.workingGreen.opacity(0.50)
-                        : (theme.style?.border ?? Color.primary.opacity(0.13)),
-                    lineWidth: 1
-                )
+                .strokeBorder(borderColor, lineWidth: 1)
         }
-        .shadow(color: .black.opacity(0.12), radius: 7, y: 2)
+        .shadow(color: .black.opacity(hovering ? 0.16 : 0.12), radius: hovering ? 9 : 7, y: 2)
         .shadow(color: session.state == .working ? Color.workingGreen.opacity(0.18) : .clear,
                 radius: 12, y: 0)
+        .animation(.easeOut(duration: 0.15), value: hovering)
         .modifier(AgeFade(session: session))
+        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .onHover { hovering = $0 }
+        .onTapGesture { if inspectorEnabled { inspecting = true } }
+        .popover(isPresented: $inspecting, arrowEdge: .bottom) {
+            SessionInspector(sessionID: session.id)
+                .environmentObject(store)
+                .environment(\.theme, theme)
+                .environment(\.renderMarkdown, markdown)
+        }
+        .contextMenu { contextMenu }
+        .help(inspectorEnabled ? "Click for the full feed" : "")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilitySummary)
+        .accessibilityAddTraits(.isButton)
+    }
+
+    private var accessibilitySummary: String {
+        var parts = ["\(session.name), \(session.state.label)", session.headline]
+        if let newest { parts.append(newest.detail) }
+        return parts.joined(separator: ". ")
+    }
+
+    @ViewBuilder
+    private var contextMenu: some View {
+        if inspectorEnabled {
+            Button("Show Details") { inspecting = true }
+        }
+        if store.axTrusted, store.resolvedWindow(for: session) != nil {
+            Button("Focus Editor Window") { store.focus(session) }
+        }
+        Divider()
+        Button("Reveal Folder in Finder") { SessionActions.revealFolder(session) }
+        Button("Open in Terminal") { SessionActions.openInTerminal(session) }
+        Button("Reveal Transcript in Finder") { SessionActions.revealTranscript(session) }
+            .disabled(session.transcript == nil)
+        Divider()
+        Button("Copy Project Path") { SessionActions.copy(session.cwd) }
+        Button("Copy Session ID") { SessionActions.copy(session.sessionID) }
+        Divider()
+        // Only an idle session stays hidden; anything else would be back on
+        // the next refresh, which is a button that appears to do nothing.
+        Button("Hide Until It Stirs") { store.hide(session) }
+            .disabled(session.state != .dormant)
     }
 
     private var header: some View {
@@ -277,12 +346,7 @@ struct SessionTile: View {
                 .font(.system(size: 13, weight: .semibold, design: .rounded))
                 .lineLimit(1)
 
-            Text(session.state.label)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(Color.forState(session.state))
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Color.forState(session.state).opacity(0.13), in: Capsule())
+            StatePill(state: session.state)
 
             Spacer(minLength: 4)
 
@@ -311,7 +375,9 @@ struct SessionTile: View {
                     Text("·")
                     Image(systemName: "arrow.triangle.branch")
                         .font(.system(size: 9))
-                    Text(session.parsed.gitBranch).lineLimit(1)
+                    Text(session.parsed.gitBranch)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                 }
             }
             .font(.system(size: 10))
@@ -322,10 +388,11 @@ struct SessionTile: View {
     @ViewBuilder
     private var nowBox: some View {
         if let newest {
+            let tint = eventColor(newest.kind, scheme)
             HStack(alignment: .top, spacing: 7) {
                 Image(systemName: newest.glyph)
                     .font(.system(size: 10))
-                    .foregroundStyle(eventColor(newest.kind))
+                    .foregroundStyle(newest.isError ? Color.errorRed : tint)
                     .frame(width: 13)
                     .padding(.top, 1)
 
@@ -333,11 +400,12 @@ struct SessionTile: View {
                     if !spotlightTag(newest).isEmpty {
                         Text(spotlightTag(newest))
                             .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(eventColor(newest.kind))
+                            .foregroundStyle(tint)
                     }
-                    eventText(newest.detail.isEmpty ? "—" : newest.detail, markdown: markdown)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(.primary.opacity(0.85))
+                    eventText(newest.detail.isEmpty ? "—" : newest.detail,
+                              markdown: markdown && newest.isProse)
+                        .font(newest.isProse ? .system(size: 11.5) : .system(size: 11, design: .monospaced))
+                        .foregroundStyle(newest.isError ? Color.errorRed.opacity(0.9) : .primary.opacity(0.85))
                         .lineLimit(3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -345,7 +413,7 @@ struct SessionTile: View {
             }
             .padding(9)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(eventColor(newest.kind).opacity(0.08),
+            .background(tint.opacity(0.08),
                         in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .modifier(Shimmer(active: session.state == .working))
         }
@@ -355,22 +423,33 @@ struct SessionTile: View {
         HStack(spacing: 10) {
             if !session.parsed.model.isEmpty {
                 Label(prettyModel(session.parsed.model), systemImage: "cpu")
+                    .help("Model: \(session.parsed.model)")
             }
             if session.parsed.contextTokens > 0 {
-                Label(compactCount(session.parsed.contextTokens), systemImage: "square.stack.3d.up")
+                HStack(spacing: 4) {
+                    ContextRing(fraction: session.parsed.contextFraction, level: session.contextLevel)
+                    Text(compactCount(session.parsed.contextTokens))
+                        .foregroundStyle(Color.forSeverity(session.contextLevel).map { AnyShapeStyle($0) }
+                                         ?? AnyShapeStyle(.tertiary))
+                }
+                .help("Context: \(session.contextSummary) (\(Int(session.parsed.contextFraction * 100))%)"
+                      + (session.contextLevel > 0 ? " — close to automatic compaction" : ""))
             }
             if session.parsed.toolCalls > 0 {
                 Label("\(session.parsed.toolCalls)", systemImage: "wrench.and.screwdriver")
+                    .help("\(session.parsed.toolCalls) tool call\(session.parsed.toolCalls == 1 ? "" : "s") this session")
             }
             Spacer(minLength: 0)
             Text(session.surface)
                 .padding(.horizontal, 5)
                 .padding(.vertical, 1.5)
                 .background(Color.primary.opacity(0.07), in: Capsule())
+                .help("Running in \(session.surface)" + (session.version.isEmpty ? "" : " · Claude Code \(session.version)"))
         }
         .font(.system(size: 9.5))
         .foregroundStyle(.tertiary)
         .labelStyle(.titleAndIcon)
+        .monospacedDigit()
     }
 }
 
@@ -431,6 +510,7 @@ struct RelativeAge: View {
                 label(Date())
             }
         }
+        .help("Last activity \(since.formatted(date: .abbreviated, time: .shortened))")
     }
 
     private func label(_ now: Date) -> some View {
@@ -497,24 +577,29 @@ struct FeedLine: View {
     let event: ActivityEvent
     var dim: Bool = false
 
+    @Environment(\.colorScheme) private var scheme
     @Environment(\.renderMarkdown) private var markdown
+
+    private var tint: Color { eventColor(event.kind, scheme) }
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Image(systemName: event.glyph)
                 .font(.system(size: 8))
-                .foregroundStyle(eventColor(event.kind).opacity(dim ? 0.6 : 1))
+                .foregroundStyle((event.isError ? Color.errorRed : tint).opacity(dim ? 0.7 : 1))
                 .frame(width: 11)
 
             if !event.tag.isEmpty {
                 Text(event.tag)
                     .font(.system(size: 9.5, weight: .medium, design: .monospaced))
-                    .foregroundStyle(eventColor(event.kind).opacity(dim ? 0.7 : 1))
+                    .foregroundStyle(tint.opacity(dim ? 0.7 : 1))
             }
 
-            eventText(detailText, markdown: markdown)
-                .font(.system(size: 9.5, design: .monospaced))
-                .foregroundStyle(.secondary.opacity(dim ? 0.75 : 1))
+            eventText(detailText, markdown: markdown && event.isProse)
+                .font(event.isProse ? .system(size: 10) : .system(size: 9.5, design: .monospaced))
+                .foregroundStyle(event.isError
+                                 ? Color.errorRed.opacity(dim ? 0.8 : 1)
+                                 : .secondary.opacity(dim ? 0.75 : 1))
                 .lineLimit(1)
 
             Spacer(minLength: 0)
@@ -530,14 +615,19 @@ struct FeedLine: View {
     }
 }
 
-func eventColor(_ kind: ActivityEvent.Kind) -> Color {
+/// One colour per kind of record, in two weights: the dark-mode set is light
+/// and saturated, which on a white card drops to almost nothing, so light
+/// mode gets the same hues pulled down far enough to read against it.
+func eventColor(_ kind: ActivityEvent.Kind, _ scheme: ColorScheme) -> Color {
+    let light = scheme == .light
     switch kind {
-    case .prompt: return Color(red: 0.42, green: 0.67, blue: 1.0)
-    case .thinking: return Color(red: 0.72, green: 0.55, blue: 0.98)
-    case .say: return Color(red: 0.38, green: 0.82, blue: 0.78)
-    case .tool: return Color(red: 0.98, green: 0.70, blue: 0.22)
-    case .result: return Color(white: 0.55)
-    case .subagent: return Color(red: 0.98, green: 0.49, blue: 0.62)
+    case .prompt:   return light ? Color(red: 0.16, green: 0.42, blue: 0.86) : Color(red: 0.42, green: 0.67, blue: 1.0)
+    case .thinking: return light ? Color(red: 0.47, green: 0.30, blue: 0.82) : Color(red: 0.72, green: 0.55, blue: 0.98)
+    case .say:      return light ? Color(red: 0.08, green: 0.52, blue: 0.49) : Color(red: 0.38, green: 0.82, blue: 0.78)
+    case .tool:     return light ? Color(red: 0.76, green: 0.46, blue: 0.02) : Color(red: 0.98, green: 0.70, blue: 0.22)
+    case .result:   return light ? Color(white: 0.42) : Color(white: 0.55)
+    case .subagent: return light ? Color(red: 0.80, green: 0.28, blue: 0.42) : Color(red: 0.98, green: 0.49, blue: 0.62)
+    case .question: return light ? Color(red: 0.78, green: 0.50, blue: 0.02) : .waitingAmber
     }
 }
 
@@ -550,7 +640,7 @@ private struct PermissionBanner: View {
             Image(systemName: "lock.fill")
                 .font(.system(size: 10))
                 .foregroundStyle(Color.waitingAmber)
-            Text("Needs Accessibility access to focus editor windows across Spaces. If “Watchtower” is already in the list, remove it with “–” and add it again.")
+            Text("Accessibility access lets the reveal button jump to a session's editor window, even on another Space.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -564,6 +654,16 @@ private struct PermissionBanner: View {
             }
             .controlSize(.small)
             .help("Re-check after approving")
+            Button {
+                withAnimation(.easeOut(duration: 0.2)) { store.hidePermissionBanner = true }
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .semibold))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.tertiary)
+            .padding(.leading, 2)
+            .help("Dismiss. You can grant access later from Settings → Permissions.")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 7)
@@ -590,9 +690,15 @@ let thinkingWords = [
 
 /// Shown while a session owes us output — right after you send a prompt, or
 /// between a tool result and whatever Claude does next.
+///
+/// When the newest record is a tool call with no result yet, the strip names
+/// the tool instead of a gerund: "Running Bash" for forty seconds is a fact,
+/// where "Percolating" for forty seconds is a guess, and a long-running
+/// command is the thing most worth knowing about a working session.
 struct ThinkingStrip: View {
     let since: Date
     let seed: Int
+    var pending: String? = nil
 
     @Environment(\.liveTicking) private var live
 
@@ -611,12 +717,14 @@ struct ThinkingStrip: View {
             // and it is the only part of the strip that has to redraw.
             TimelineView(.periodic(from: wholeSecond(after: .now), by: live ? 1 : 3600)) { context in
                 let elapsed = max(0, context.date.timeIntervalSince(since))
-                let word = thinkingWords[(seed &+ Int(elapsed / 3)) % thinkingWords.count]
+                let word = pending.map { "Running \($0)" }
+                    ?? thinkingWords[(seed &+ Int(elapsed / 3)) % thinkingWords.count]
 
                 HStack(spacing: 6) {
                     Text(word + "…")
                         .font(.system(size: 11, weight: .medium, design: .rounded))
                         .foregroundStyle(.primary.opacity(0.78))
+                        .lineLimit(1)
 
                     Text(shortDuration(elapsed))
                         .font(.system(size: 9.5, design: .monospaced))
@@ -635,6 +743,8 @@ struct ThinkingStrip: View {
 private struct EmptyState: View {
     let reason: FleetStore.EmptyReason
 
+    @EnvironmentObject private var store: FleetStore
+
     var body: some View {
         VStack(spacing: 10) {
             Spacer()
@@ -648,8 +758,40 @@ private struct EmptyState: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 320)
+
+            // The fix for each is one click away, so offer it here rather
+            // than sending anyone off to find the right toolbar button.
+            switch reason {
+            case .filtered:
+                Button("Show All Sessions") { store.activeOnly = false }
+                    .controlSize(.small)
+                    .padding(.top, 4)
+            case .cleanedUp:
+                Button("Bring Them Back") { store.restoreCleanedUp() }
+                    .controlSize(.small)
+                    .padding(.top, 4)
+            case .noSessions:
+                EmptyView()
+            }
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+
+// MARK: - Environment
+
+private struct InspectorEnabledKey: EnvironmentKey {
+    static let defaultValue = true
+}
+
+extension EnvironmentValues {
+    /// Whether clicking a tile may open the inspector popover. Off inside the
+    /// notch's full-app panel: a popover anchored in a panel that refuses to
+    /// become key opens behind it, or not at all.
+    var inspectorEnabled: Bool {
+        get { self[InspectorEnabledKey.self] }
+        set { self[InspectorEnabledKey.self] = newValue }
     }
 }

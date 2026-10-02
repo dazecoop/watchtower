@@ -1,6 +1,14 @@
 import SwiftUI
 import AppKit
 
+/// Version as stamped into the bundle by `build.sh`, or a marker when run
+/// straight out of `.build` where there is no bundle to read.
+enum AppInfo {
+    static let version: String = {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev"
+    }()
+}
+
 extension String {
     func firstLine(max limit: Int) -> String {
         let line = split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
@@ -130,6 +138,9 @@ extension Color {
     static let workingGreen = Color(red: 0.26, green: 0.80, blue: 0.47)
     static let waitingAmber = Color(red: 0.98, green: 0.70, blue: 0.22)
     static let dormantGray = Color(white: 0.52)
+    /// The one red in the app: a critical limit, a dead network, a failed
+    /// tool call. Shared so "something is wrong" is a single colour.
+    static let errorRed = Color(red: 0.95, green: 0.35, blue: 0.35)
 
     /// One fixed colour per plan limit, shared by the usage bar and the notch
     /// rings so a given limit reads the same wherever you see it. Severity is
@@ -151,7 +162,7 @@ extension Color {
     /// callers fall back to their own resting colour.
     static func forSeverity(_ level: Int) -> Color? {
         switch level {
-        case 2: return Color(red: 0.95, green: 0.35, blue: 0.35)
+        case 2: return .errorRed
         case 1: return .waitingAmber
         default: return nil
         }
@@ -164,7 +175,7 @@ extension Color {
         switch s {
         case .online: return .workingGreen
         case .degraded: return .waitingAmber
-        case .offline: return Color(red: 0.95, green: 0.35, blue: 0.35)
+        case .offline: return .errorRed
         case .unknown: return .dormantGray
         }
     }

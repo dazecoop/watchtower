@@ -57,7 +57,7 @@ enum OverlayExpansion {
         let probe = NSHostingView(rootView: AnyView(
             ExpandedPanel(measuring: true)
                 .environmentObject(store)
-                .environment(\.theme, store.theme)
+                .environment(\.theme, OverlayExpansion.appTheme)
                 .frame(width: width)
         ))
         probe.layoutSubtreeIfNeeded()
@@ -252,6 +252,9 @@ struct ExpandedAppPanel: View {
         // supplies the black underneath.
         .environment(\.theme, OverlayExpansion.appTheme)
         .environment(\.renderMarkdown, store.renderMarkdown)
+        // A popover from a panel that never becomes key is unreliable, and
+        // the window is one click away for anyone who wants the detail.
+        .environment(\.inspectorEnabled, false)
     }
 
     /// Stands in for the window's toolbar. There is deliberately nothing here

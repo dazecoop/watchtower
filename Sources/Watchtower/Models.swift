@@ -26,6 +26,10 @@ struct ActivityEvent: Identifiable, Equatable {
         case tool(String)
         case result(Int) // line count of tool output
         case subagent(String)
+        /// Claude has stopped to ask you something — a question, or a plan
+        /// waiting for approval. The turn is technically still running, but
+        /// nothing moves until you answer.
+        case question
     }
 
     let id: Int
@@ -39,8 +43,9 @@ struct ActivityEvent: Identifiable, Equatable {
         case .thinking: return "sparkles"
         case .say: return "text.alignleft"
         case .tool: return "wrench.and.screwdriver.fill"
-        case .result: return "arrow.turn.down.right"
+        case .result: return isError ? "exclamationmark.triangle.fill" : "arrow.turn.down.right"
         case .subagent: return "person.2.fill"
+        case .question: return "questionmark.circle.fill"
         }
     }
 
@@ -52,6 +57,33 @@ struct ActivityEvent: Identifiable, Equatable {
         case .tool(let n): return n
         case .result: return ""
         case .subagent(let n): return n
+        case .question: return "asks"
+        }
+    }
+
+    /// A tool result Claude Code flagged as an error. Worth a different colour:
+    /// a red line in the feed is often the first sign a session has gone off
+    /// the rails, long before Claude says so.
+    var isError: Bool {
+        if case .result = kind { return detail.hasPrefix("error:") }
+        return false
+    }
+
+    /// Prose reads in the system face; commands, paths and output stay
+    /// monospaced. Claude's own sentences set in a terminal font looked like
+    /// log lines, and the two deserve to be told apart at a glance.
+    var isProse: Bool {
+        switch kind {
+        case .prompt, .say, .thinking, .subagent, .question: return true
+        case .tool, .result: return false
+        }
+    }
+
+    /// A tool call that has not yet produced a result — the tool is running.
+    var isToolCall: Bool {
+        switch kind {
+        case .tool, .subagent: return true
+        default: return false
         }
     }
 }
@@ -68,6 +100,40 @@ struct ParsedTranscript: Equatable {
     var toolCalls = 0
     var promptCount = 0
     var lastEventAt: Date?
+
+    /// The newest record is a question Claude is waiting on you to answer.
+    /// Claude Code reports the session as busy throughout, but it is your
+    /// move, and the tile should say so.
+    var awaitingAnswer: Bool {
+        if case .question = events.last?.kind { return true }
+        return false
+    }
+
+    /// The tool that is running right now, if the newest record is a call
+    /// that has not produced a result yet.
+    var pendingTool: String? {
+        guard let last = events.last else { return nil }
+        switch last.kind {
+        case .tool(let name): return name
+        case .subagent(let name): return name == "agent" ? "an agent" : "\(name) agent"
+        default: return nil
+        }
+    }
+
+    /// How many tokens the model can hold. Claude Code marks the long-context
+    /// variants with a `[1m]` suffix on the model id; everything else is the
+    /// standard window.
+    var contextLimit: Int {
+        model.contains("[1m]") || model.contains("-1m") ? 1_000_000 : 200_000
+    }
+
+    /// 0…1 of the context window in use. Claude Code compacts automatically
+    /// at around 80%, so a figure approaching that is the one worth noticing:
+    /// the session is about to lose detail.
+    var contextFraction: Double {
+        guard contextTokens > 0 else { return 0 }
+        return min(1, Double(contextTokens) / Double(contextLimit))
+    }
 }
 
 /// One row of ~/.claude/sessions/<pid>.json
@@ -117,11 +183,28 @@ struct SessionSnapshot: Identifiable, Equatable {
         let activity = max(reg.statusUpdatedAt, parsed.lastEventAt ?? .distantPast)
         self.lastActivity = activity
 
-        if reg.status == "busy" {
+        if reg.status == "busy" && !parsed.awaitingAnswer {
             self.state = .working
         } else {
             self.state = Date().timeIntervalSince(activity) > Self.dormantAfter ? .dormant : .waiting
         }
+    }
+
+    /// How long the session has been open.
+    var uptime: TimeInterval {
+        startedAt == .distantPast ? 0 : Date().timeIntervalSince(startedAt)
+    }
+
+    /// "94k of 200k", for tooltips and the inspector.
+    var contextSummary: String {
+        "\(compactCount(parsed.contextTokens)) of \(compactCount(parsed.contextLimit))"
+    }
+
+    /// 0 fine, 1 close to compaction, 2 about to compact — on the same scale
+    /// `Color.forSeverity` reads.
+    var contextLevel: Int {
+        let f = parsed.contextFraction
+        return f >= 0.85 ? 2 : (f >= 0.70 ? 1 : 0)
     }
 
     /// How long a quiet session waits before it reads as dormant rather than

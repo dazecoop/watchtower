@@ -3,11 +3,19 @@ import UserNotifications
 
 /// Posts a notification when a session stops working and starts waiting on you —
 /// the moment that actually needs your attention when several are running.
-final class AttentionNotifier {
+///
+/// Clicking the notification hands the session id back through `onActivate`,
+/// so the store can jump to that session's editor window: the notification is
+/// the interruption, and the click is the way back to what caused it.
+final class AttentionNotifier: NSObject, UNUserNotificationCenterDelegate {
     static let shared = AttentionNotifier()
 
     private var lastStates: [String: SessionState] = [:]
     private var primed = false
+
+    /// Set by the store. Called on the main thread with the session id a
+    /// clicked notification was posted for.
+    var onActivate: ((String) -> Void)?
 
     /// `UNUserNotificationCenter` throws rather than fails when the process
     /// isn't inside an app bundle, taking the whole app down with it. That is
@@ -15,9 +23,26 @@ final class AttentionNotifier {
     /// development, so notifications are skipped there instead.
     private static let available = Bundle.main.bundleIdentifier != nil
 
+    private static let sessionKey = "sessionID"
+
+    private override init() {
+        super.init()
+        guard Self.available else { return }
+        UNUserNotificationCenter.current().delegate = self
+    }
+
     static func requestAuthorization() {
         guard available else { return }
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
+    }
+
+    /// Whether the user has switched notifications off for Watchtower in
+    /// System Settings, in which case the in-app toggle can do nothing.
+    static func authorizationDenied(_ then: @escaping (Bool) -> Void) {
+        guard available else { return then(false) }
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            then(settings.authorizationStatus == .denied)
+        }
     }
 
     /// Records states without alerting. Used while alerts are off so that
@@ -45,12 +70,30 @@ final class AttentionNotifier {
 
         let content = UNMutableNotificationContent()
         content.title = "\(snapshot.name) needs you"
-        content.body = snapshot.headline
+        content.body = snapshot.parsed.awaitingAnswer
+            ? (snapshot.parsed.events.last?.detail ?? snapshot.headline)
+            : snapshot.headline
         content.subtitle = snapshot.projectName
         content.sound = .default
+        content.userInfo = [Self.sessionKey: snapshot.sessionID]
+        // One notification per session: a session that flips back and forth
+        // replaces its own alert rather than stacking a column of them.
+        content.threadIdentifier = snapshot.sessionID
 
         UNUserNotificationCenter.current().add(
-            UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+            UNNotificationRequest(identifier: snapshot.sessionID, content: content, trigger: nil)
         )
+    }
+
+    // MARK: - UNUserNotificationCenterDelegate
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                didReceive response: UNNotificationResponse,
+                                withCompletionHandler completionHandler: @escaping () -> Void) {
+        defer { completionHandler() }
+        guard response.actionIdentifier == UNNotificationDefaultActionIdentifier,
+              let id = response.notification.request.content.userInfo[Self.sessionKey] as? String
+        else { return }
+        DispatchQueue.main.async { [weak self] in self?.onActivate?(id) }
     }
 }

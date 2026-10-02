@@ -47,9 +47,13 @@ private struct MenuBarContent: View {
     var body: some View {
         MenuBarRows()
         Divider()
+        MenuBarUsage()
         Button("Open Watchtower") {
             NSApplication.shared.activate(ignoringOtherApps: true)
+            AppWindow.reopen?()
         }
+        SettingsLink { Text("Settings…") }
+        Divider()
         Button("Quit Watchtower") {
             NSApplication.shared.terminate(nil)
         }
@@ -60,6 +64,9 @@ private struct MenuBarRows: View {
     @EnvironmentObject var store: FleetStore
 
     var body: some View {
+        if store.visible.isEmpty {
+            Text("No Claude sessions running")
+        }
         ForEach(store.visible) { session in
             Button(rowTitle(session)) {
                 store.focus(session)
@@ -75,6 +82,31 @@ private struct MenuBarRows: View {
         case .dormant: mark = "○"
         }
         return "\(mark)  \(session.name) — \(session.state.label)"
+    }
+}
+
+/// The plan limits as one disabled line each, so the menu answers "how much
+/// have I got left" without opening the window.
+private struct MenuBarUsage: View {
+    @EnvironmentObject var store: FleetStore
+
+    var body: some View {
+        if let usage = store.usage, !usage.limits.isEmpty {
+            ForEach(usage.limits) { limit in
+                Text(line(limit, stale: usage.stale))
+            }
+            Divider()
+        }
+    }
+
+    private func line(_ limit: UsageLimit, stale: Bool) -> String {
+        var s = "\(limit.label)  \(limit.figure)"
+        if limit.expired {
+            s += "  · window reset"
+        } else if let resets = limit.resetsAt {
+            s += "  · resets in \(shortDuration(resets.timeIntervalSinceNow))"
+        }
+        return stale ? s + "  (not current)" : s
     }
 }
 
@@ -103,6 +135,31 @@ struct WatchtowerCommands: Commands {
                 store.showOverlay.toggle()
             }
             .keyboardShortcut("o", modifiers: [.command, .shift])
+        }
+
+        // ⌘1–⌘9 jump to the editor window of the first nine tiles, in the
+        // order they sit on screen. The grid holds its order while work is
+        // happening precisely so that a number keeps meaning the same tile.
+        CommandMenu("Session") {
+            JumpItems(store: store)
+        }
+    }
+}
+
+/// Its own type for the same reason as the rest: nine buttons inside a
+/// `ForEach` inside a `CommandMenu` is more nesting than the scene builder
+/// comfortably takes inline.
+private struct JumpItems: View {
+    @ObservedObject var store: FleetStore
+
+    var body: some View {
+        ForEach(0..<9, id: \.self) { index in
+            let session = store.visible.indices.contains(index) ? store.visible[index] : nil
+            Button(session.map { "Jump to \($0.name)" } ?? "Jump to Session \(index + 1)") {
+                store.focus(index: index)
+            }
+            .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .command)
+            .disabled(session == nil || !store.axTrusted)
         }
     }
 }
