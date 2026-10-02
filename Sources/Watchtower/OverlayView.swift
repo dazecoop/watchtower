@@ -38,6 +38,12 @@ struct OverlayMetrics {
     var spinner: CGFloat { max(1.5, round(2 * scale)) }
     var mark: CGFloat { round(19 * scale) }
     var percent: CGFloat { round(10 * scale) }
+
+    /// The status row under the percentage. Small on purpose: it is a glance,
+    /// not a readout, and the gauge has to stay the thing you look at.
+    var dot: CGFloat { max(4, round(5 * scale)) }
+    var statusIcon: CGFloat { max(6, round(7.5 * scale)) }
+    var statusGap: CGFloat { max(3, round(4 * scale)) }
 }
 
 /// The notch outline: flush along the screen edge, swelling out of it through
@@ -191,6 +197,46 @@ struct OverlayContent: View {
     /// open they freeze. Fade the gauge rather than present them as current.
     private var usageStale: Bool { store.usage?.stale ?? false }
 
+    private var showsNet: Bool { store.checkInternet }
+    private var showsAwake: Bool { store.keepAwake }
+    private var showsStatus: Bool { showsNet || showsAwake }
+
+    @ViewBuilder
+    private var netDot: some View {
+        NetDot(status: store.netStatus, size: m.dot)
+    }
+
+    @ViewBuilder
+    private var awakeIcon: some View {
+        Image(systemName: "cup.and.saucer.fill")
+            .font(.system(size: m.statusIcon))
+            .foregroundStyle(store.isHoldingAwake ? Color.workingGreen : .white.opacity(0.35))
+    }
+
+    /// The flared strip at each end of the notch is dead space the shape has
+    /// already reserved, and an indicator parked in it costs the face nothing.
+    /// It only works where the sweep is actually there and deep enough to hold
+    /// one without crowding the curve: a squared-off end has no strip at all,
+    /// and a shallow one would push the dot onto the fillet.
+    ///
+    /// The material in that strip sits at the inward end of it — the shape is
+    /// narrowest where it meets the bezel and widens as it comes out — so the
+    /// indicators are anchored to the inward face, not to the screen edge.
+    /// Both indicators sit beside the percentage. They were tried tucked into
+    /// the notch's end sweeps, which costs the face no height — but a notch
+    /// parked in a screen corner has only one sweep, and a notch at default
+    /// rounding has barely enough room in either, so the layout kept falling
+    /// back anyway. One position that always works beats two that sometimes do.
+    @ViewBuilder
+    private var inlineStatus: some View {
+        if showsStatus {
+            HStack(spacing: m.statusGap) {
+                if showsNet { netDot }
+                if showsAwake { awakeIcon }
+            }
+        }
+    }
+
     private var fleet: FleetMood {
         if store.workingCount > 0 { return .working }
         if store.waitingCount > 0 { return .waiting }
@@ -341,11 +387,17 @@ struct OverlayContent: View {
             UsageGauge(limits: limits, mood: fleet, metrics: m, stale: usageStale)
 
             if let headline {
-                Text("\(headline.percent)%")
-                    .font(.system(size: m.percent, weight: .semibold, design: .rounded))
-                    .foregroundStyle(Color.forSeverity(headline.level) ?? .white.opacity(0.92))
-                    .monospacedDigit()
-                    .opacity(usageStale ? 0.5 : 1)
+                HStack(spacing: m.statusGap) {
+                    Text("\(headline.percent)%")
+                        .font(.system(size: m.percent, weight: .semibold, design: .rounded))
+                        .foregroundStyle(Color.forSeverity(headline.level) ?? .white.opacity(0.92))
+                        .monospacedDigit()
+                        .opacity(usageStale ? 0.5 : 1)
+
+                    inlineStatus
+                }
+            } else {
+                inlineStatus
             }
         }
         .fixedSize()
@@ -400,6 +452,11 @@ struct OverlayContent: View {
                 .joined(separator: " · ")
             lines.append(usageStale ? "\(figures) (not current)" : figures)
         }
+
+        var state: [String] = []
+        if store.checkInternet { state.append(store.netStatus.label) }
+        if store.isHoldingAwake { state.append("Keeping this Mac awake") }
+        if !state.isEmpty { lines.append(state.joined(separator: " · ")) }
 
         if let busy = store.sessions
             .filter({ $0.state != .dormant })

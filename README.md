@@ -129,6 +129,39 @@ This is not the same as the **⚡** filter, which hides idle sessions for as
 long as it is on. Clean up clears the ones in front of you now and leaves the
 next one alone.
 
+### Connection check
+
+Optional, off by default. Turn it on and a dot appears in the toolbar and the
+notch:
+
+| | |
+| --- | --- |
+| 🟢 Green | The internet is working |
+| 🟡 Amber | Connected to a network, but nothing is answering — a captive portal, a dead router, DNS blocked, a VPN half-way up |
+| 🔴 Red | No network connection at all |
+
+It tells the last two apart because they need different things from you: a
+Wi-Fi icon showing full bars while nothing loads is the case most worth
+catching, and the one macOS itself is quietest about.
+
+Every 15 seconds it opens a connection to one public DNS resolver — Cloudflare,
+Google, Quad9 and OpenDNS in rotation — notes whether it opened, and closes it.
+Nothing is sent and nothing is read. A single failure is not treated as an
+outage: it tries a second, different resolver before changing the dot.
+
+### Keeping the Mac awake
+
+Also optional and off by default. With it on, Watchtower holds off idle sleep
+while a session is mid-turn, so a long run doesn't stall because the machine
+dozed off. A small cup icon sits beside the connection dot: lit while it is
+holding, dimmed while it is merely armed.
+
+It lets go the moment nothing is working, so an idle Mac sleeps exactly as it
+normally would. It takes the same power assertion as `caffeinate -i`, so the
+display still sleeps on its usual schedule and closing the lid still suspends —
+only idle system sleep is deferred. Pausing updates releases it too, since a
+paused Watchtower has stopped watching what it would be holding on for.
+
 ### Jumping to a session
 
 The **⬀** button on each tile focuses the editor window running that session,
@@ -229,6 +262,8 @@ Four pages down the left.
 | --- | --- |
 | **Notify when a session needs you** | A notification the moment a session stops working and starts waiting on your reply. The most useful setting here when several are running. |
 | **Menu bar status** | Off by default. Adds a working/waiting count to the menu bar with a jump-to menu. |
+| **Keep this Mac awake while a session is working** | Off by default. Holds off idle sleep while Claude is mid-turn, and lets go as soon as nothing is. See [keeping the Mac awake](#keeping-the-mac-awake). |
+| **Check the internet connection** | Off by default, and the only setting that uses the network. See [connection check](#connection-check). |
 | **Hide Dock icon** | Runs Watchtower in the background with no Dock icon and no app menu. Needs the notch or the menu bar status on first, since one of them has to be able to open the window again — otherwise the setting is greyed out, and turning both off later puts the Dock icon back. |
 
 The toolbar also has a filter field for narrowing by name, project or title,
@@ -258,7 +293,12 @@ added at the end rather than pushed into the middle.
 ## Privacy
 
 Everything stays on your machine: Watchtower reads local files under
-`~/.claude` and makes no network requests of any kind. See the FAQ for
+`~/.claude`, and out of the box it makes no network requests of any kind.
+
+The one exception is the optional [connection check](#connection-check), which
+is off until you turn it on, and even then only opens a connection to a public
+DNS resolver to see whether it opens. It sends nothing, and it never contacts
+Anthropic or this project. See the FAQ for
 [what it does and does not touch](#does-it-send-my-code-or-conversations-anywhere),
 and how to verify that yourself.
 
@@ -302,6 +342,12 @@ No. It reads files under `~/.claude` that Claude Code has already written, and
 that is all. Nothing is uploaded, and there is no telemetry or analytics. Plan
 usage figures come from a cache Claude Code keeps on disk, not from a request
 to Anthropic.
+
+Turning on the [connection check](#connection-check) is the only thing that
+makes Watchtower use the network, and all it does is open a TCP connection to
+port 53 on a public DNS resolver and close it again. No request is sent, no
+response is read, and nothing identifying the machine leaves it. You can watch
+exactly that with `nettop -p Watchtower`, or leave it off.
 
 ### Can it interfere with my sessions?
 

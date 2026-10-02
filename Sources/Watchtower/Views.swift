@@ -77,6 +77,24 @@ struct RootView: View {
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 }
+
+                if store.checkInternet {
+                    NetDot(status: store.netStatus)
+                        .padding(.leading, 2)
+                }
+
+                // Shown whenever the setting is on, dimmed while nothing is
+                // working: "armed" and "holding" are different things, and
+                // hiding the icon entirely would make the second look broken.
+                if store.keepAwake {
+                    Image(systemName: "cup.and.saucer.fill")
+                        .font(.system(size: 10))
+                        .foregroundStyle(store.isHoldingAwake ? Color.workingGreen : .secondary)
+                        .opacity(store.isHoldingAwake ? 1 : 0.45)
+                        .help(store.isHoldingAwake
+                              ? "Keeping this Mac awake while a session is working"
+                              : "Will keep this Mac awake once a session starts working")
+                }
             }
         }
 

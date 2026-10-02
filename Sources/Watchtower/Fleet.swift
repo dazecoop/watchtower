@@ -195,7 +195,10 @@ enum SortMode: String, CaseIterable, Identifiable {
 final class FleetStore: ObservableObject {
     @Published private(set) var sessions: [SessionSnapshot] = []
     private(set) var lastRefresh = Date()
-    @Published var paused = false
+    /// Pausing stops `refresh`, and with it every reassessment of whether
+    /// anything is still working — so the sleep guard has to be let go here or
+    /// it would hold on against a fleet it has stopped watching.
+    @Published var paused = false { didSet { applySleepGuard() } }
     @Published var activeOnly = false { didSet { recomputeOrder(force: true) } }
     @Published var sortMode: SortMode = .status { didSet { recomputeOrder(force: true) } }
 
@@ -318,6 +321,24 @@ final class FleetStore: ObservableObject {
 
     @Published var showThinking = storedBool("showThinking", true) {
         didSet { UserDefaults.standard.set(showThinking, forKey: "showThinking") }
+    }
+
+    /// Off until asked for: it is the only thing in Watchtower that opens a
+    /// socket, and the app's whole claim is that it does not.
+    @Published var checkInternet = storedBool("checkInternet", false) {
+        didSet {
+            UserDefaults.standard.set(checkInternet, forKey: "checkInternet")
+            applyReachability()
+        }
+    }
+
+    /// Whether to hold the Mac awake while a session is mid-turn. The guard
+    /// itself is still conditional on there being one — see `refresh`.
+    @Published var keepAwake = storedBool("keepAwake", false) {
+        didSet {
+            UserDefaults.standard.set(keepAwake, forKey: "keepAwake")
+            applySleepGuard()
+        }
     }
 
     @Published var notifyOnAttention = storedBool("notifyOnAttention", true) {
@@ -443,6 +464,32 @@ final class FleetStore: ObservableObject {
 
     @Published private(set) var onScreen = true
 
+    private let reachability = ReachabilityMonitor()
+    private let sleepGuard = SleepGuard()
+
+    /// Mirrored out of the monitor so views observe the store alone.
+    @Published private(set) var netStatus: NetStatus = .unknown
+
+    /// Whether the Mac is currently being held awake. Not merely the setting:
+    /// the guard is only taken while something is actually working.
+    var isHoldingAwake: Bool { sleepGuard.held }
+
+    private func applyReachability() {
+        reachability.onChange = { [weak self] status in self?.netStatus = status }
+        checkInternet ? reachability.start() : reachability.stop()
+        netStatus = reachability.status
+    }
+
+    /// When the last check landed, for the settings page to show.
+    var netCheckedAt: Date? { reachability.checkedAt }
+
+    /// Nothing working means nothing to stay awake for, whatever the setting
+    /// says. This is the only place the assertion is decided, so there is no
+    /// path that leaves it held over an idle fleet.
+    private func applySleepGuard() {
+        sleepGuard.apply(keepAwake && !paused && workingCount > 0)
+    }
+
     private let engine = FleetEngine()
     private let queue = DispatchQueue(label: "watchtower.io", qos: .utility)
     /// Walking another app's Window menu is synchronous IPC into that app and
@@ -521,6 +568,7 @@ final class FleetStore: ObservableObject {
         refreshWindows()
         startTimer()
         observeVisibility()
+        applyReachability()
     }
 
     private func stopTimer() {
@@ -666,6 +714,7 @@ final class FleetStore: ObservableObject {
                 if changed { self.sessions = snaps }
                 if self.usage != usage { self.usage = usage }
                 if changed || self.ticks % 10 == 0 { self.recomputeOrder() }
+                self.applySleepGuard()
                 self.lastRefresh = Date()
             }
         }

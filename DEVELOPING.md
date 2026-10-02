@@ -19,6 +19,8 @@ everything is SwiftUI and AppKit.
 | `Fleet.swift` | `FleetEngine` (all filesystem work, on one background queue) and `FleetStore` (the `@MainActor` view model and preferences). |
 | `TranscriptTail.swift` | Incremental follower for a session's `.jsonl`. |
 | `Usage.swift` / `UsageBar.swift` | Plan-limit parsing and the bottom strip. |
+| `Reachability.swift` | The optional connection check. |
+| `SleepGuard.swift` | The optional power assertion. |
 | `WindowFocuser.swift` | Accessibility-based editor window focusing. |
 | `AttentionNotifier.swift` | Working → waiting transition alerts. |
 | `Theme.swift` | Themes and the environment keys. |
@@ -368,6 +370,54 @@ Not to be confused with the active-only filter (`⚡`), which hides every idle
 session for as long as it is on. Clean up clears the current ones and leaves
 the next one alone, so the two are offered separately and the toolbar drops the
 clean-up button entirely while the filter is on.
+
+## Connection check
+
+Off by default, and the only code in Watchtower that opens a socket — which is
+why it is a setting rather than a feature, and why the README says so plainly.
+
+`NWPathMonitor` gives the link state, and that alone decides red: no satisfied
+path means no network, and there is nothing to probe. With a path up, the probe
+is an `NWConnection` to port 53 on a public resolver. Reaching `.ready` is the
+whole test — nothing is written and nothing is read, so there is no DNS query
+to answer and no payload to leak. `.waiting` counts as a failure: it means the
+system has nowhere to send this right now, which is what a dead network looks
+like, and taking it at face value is what makes a captive portal show up as
+amber in four seconds rather than hanging.
+
+Four resolvers rotate (Cloudflare, Google, Quad9, OpenDNS). That is one
+connection per operator per minute, which is nothing to any of them, and it
+stops one resolver having a bad day from reading as an outage. A failed probe
+is retried against the *next* operator before the dot changes, for the same
+reason — two different networks failing back to back is a real signal, one is
+noise.
+
+The amber state is the point of the whole thing. Offline is something macOS
+already tells you about; connected-but-useless is the one it is quietest about,
+and the one that wastes the most time.
+
+## Keeping the Mac awake
+
+`IOPMAssertionCreateWithName` with `kIOPMAssertionTypePreventUserIdleSystemSleep`
+— the same assertion `caffeinate -i` takes. Not a `caffeinate` subprocess: no
+child to supervise, and the kernel drops the assertion if Watchtower dies, so a
+crash cannot strand a Mac that will never sleep again. Deliberately not
+`PreventUserIdleDisplaySleep`: the display sleeping does not stop a session, and
+an app that keeps the screen lit because something is running in the background
+is an app people turn off.
+
+One line decides it, in one place:
+
+```swift
+sleepGuard.apply(keepAwake && !paused && workingCount > 0)
+```
+
+`apply` is idempotent, so `refresh` can hand it the current answer every second
+without tracking edges, and the three things that can change the answer — the
+setting, the pause, and the fleet — all route through it. The `paused` term is
+not decoration: pausing stops `refresh`, so without it the assertion would be
+held on the strength of a fleet the app had stopped looking at, and an idle Mac
+would stay awake until something happened to resume it.
 
 ## Running without a Dock icon
 

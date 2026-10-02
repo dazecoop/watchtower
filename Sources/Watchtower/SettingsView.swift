@@ -256,6 +256,19 @@ private struct BehaviourSettings: View {
                 Caption("Adds a count of working and waiting sessions to the menu bar, with a jump-to menu.")
             }
 
+            Section("Power") {
+                Toggle("Keep this Mac awake while a session is working", isOn: $store.keepAwake)
+                Caption("Holds off idle sleep, the same way `caffeinate -i` does, but only while Claude is mid-turn. The moment nothing is working it lets go, so an idle Mac sleeps as it normally would. The display still sleeps, and closing the lid still suspends.")
+            }
+
+            Section("Network") {
+                Toggle("Check the internet connection", isOn: $store.checkInternet)
+                Caption("Adds a dot showing whether this Mac can actually reach the internet: **green** working, **amber** connected but nothing answering, **red** no connection at all.")
+                if store.checkInternet {
+                    Caption("This is the only part of Watchtower that uses the network. Every \(Int(ReachabilityMonitor.interval)) seconds it opens a connection to a public DNS resolver — Cloudflare, Google, Quad9, OpenDNS in rotation — notes whether it opened, and closes it. Nothing is sent, nothing is read, and it never contacts Anthropic or this project.")
+                }
+            }
+
             Section("Dock") {
                 Toggle("Hide Dock icon", isOn: $store.hideDockIcon)
                     .disabled(!store.canHideDockIcon)

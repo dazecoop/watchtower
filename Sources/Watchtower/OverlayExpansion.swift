@@ -115,6 +115,8 @@ struct ExpandedPanel: View {
                 .font(.system(size: 12.5, weight: .semibold, design: .rounded))
                 .foregroundStyle(.white.opacity(0.92))
 
+            NotchStatus(store: store)
+
             Spacer(minLength: 0)
 
             if store.hasCleanedUp {
@@ -269,6 +271,8 @@ struct ExpandedAppPanel: View {
                     .foregroundStyle(.white.opacity(0.5))
             }
 
+            NotchStatus(store: store)
+
             Spacer(minLength: 0)
 
             NotchControl(symbol: "bolt.fill", on: store.activeOnly, help: "Hide idle sessions") {
@@ -372,5 +376,28 @@ private struct NotchControl: View {
         NotchControlLabel(symbol: symbol, on: on)
             .onTapGesture(perform: action)
             .help(help)
+    }
+}
+
+
+/// The connectivity dot and the awake icon, for the notch's two headers. Both
+/// appear only when their setting is on, so the header stays empty for anyone
+/// who wants neither.
+private struct NotchStatus: View {
+    @ObservedObject var store: FleetStore
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if store.checkInternet {
+                NetDot(status: store.netStatus, size: 6)
+            }
+            if store.keepAwake {
+                Image(systemName: "cup.and.saucer.fill")
+                    .font(.system(size: 9))
+                    .foregroundStyle(store.isHoldingAwake
+                                     ? Color.workingGreen
+                                     : .white.opacity(0.35))
+            }
+        }
     }
 }

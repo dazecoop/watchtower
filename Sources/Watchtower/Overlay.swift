@@ -548,7 +548,9 @@ final class OverlayController: ObservableObject {
             limits.joined(separator: ","),
             "\(store.workingCount)/\(store.waitingCount)/\(store.sessions.count)",
             // Cleaning up changes both the row count and the header's chips.
-            "\(store.listed.count)/\(store.hasCleanedUp)/\(store.cleanableCount > 0)"
+            "\(store.listed.count)/\(store.hasCleanedUp)/\(store.cleanableCount > 0)",
+            // Each indicator the header gains is width the panel has to allow.
+            "\(store.checkInternet)/\(store.keepAwake)"
         ].joined(separator: "|")
     }
 

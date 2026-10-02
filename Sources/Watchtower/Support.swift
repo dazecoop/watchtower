@@ -157,6 +157,18 @@ extension Color {
         }
     }
 
+    /// Green working, amber reaching nothing, red nothing to reach. Deliberately
+    /// the same green and amber as session state: one vocabulary of colour for
+    /// "fine" and "needs you" across the whole app.
+    static func forNet(_ s: NetStatus) -> Color {
+        switch s {
+        case .online: return .workingGreen
+        case .degraded: return .waitingAmber
+        case .offline: return Color(red: 0.95, green: 0.35, blue: 0.35)
+        case .unknown: return .dormantGray
+        }
+    }
+
     static func forState(_ s: SessionState) -> Color {
         switch s {
         case .working: return .workingGreen
@@ -217,5 +229,26 @@ extension EnvironmentValues {
     var liveTicking: Bool {
         get { self[LiveTickingKey.self] }
         set { self[LiveTickingKey.self] = newValue }
+    }
+}
+
+
+// MARK: - Status dot
+
+/// The connectivity dot. Small enough to sit in a toolbar or the notch's
+/// header without taking a line of its own, and the only thing on screen that
+/// says anything about the network.
+struct NetDot: View {
+    let status: NetStatus
+    var size: CGFloat = 7
+
+    var body: some View {
+        Circle()
+            .fill(Color.forNet(status))
+            .frame(width: size, height: size)
+            // Unknown is a state to notice, not to read as fine.
+            .opacity(status == .unknown ? 0.5 : 1)
+            .help(status.label)
+            .accessibilityLabel(status.label)
     }
 }
