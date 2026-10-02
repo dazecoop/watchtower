@@ -6,8 +6,15 @@ import SwiftUI
 /// sections and needed scrolling to reach the end. The notch's shape and what
 /// it does when you click it are separate decisions, so they get separate
 /// pages rather than one long column.
+///
+/// Behaviour went the same way. It had become the page for anything that was
+/// not appearance or the notch — alerts, the menu bar, the Dock, a permission
+/// prompt, and then polling, sleep and the network on top — which is not a
+/// subject, just a leftover. These are grouped by what they touch instead: the
+/// things that interrupt you, the things that reach outside the app, and the
+/// places the app can put itself.
 private enum SettingsPage: String, CaseIterable, Identifiable {
-    case appearance, notch, expanding, behaviour
+    case appearance, notch, expanding, notifications, powerNetwork, dockMenuBar, permissions
 
     var id: String { rawValue }
 
@@ -16,7 +23,10 @@ private enum SettingsPage: String, CaseIterable, Identifiable {
         case .appearance: return "Appearance"
         case .notch: return "Notch"
         case .expanding: return "Expanding"
-        case .behaviour: return "Behaviour"
+        case .notifications: return "Notifications"
+        case .powerNetwork: return "Power & Network"
+        case .dockMenuBar: return "Dock & Menu Bar"
+        case .permissions: return "Permissions"
         }
     }
 
@@ -25,7 +35,10 @@ private enum SettingsPage: String, CaseIterable, Identifiable {
         case .appearance: return "paintpalette"
         case .notch: return "rectangle.topthird.inset.filled"
         case .expanding: return "arrow.up.left.and.arrow.down.right"
-        case .behaviour: return "gearshape"
+        case .notifications: return "bell"
+        case .powerNetwork: return "powerplug"
+        case .dockMenuBar: return "dock.rectangle"
+        case .permissions: return "lock.shield"
         }
     }
 }
@@ -36,8 +49,8 @@ struct SettingsView: View {
     @State private var page: SettingsPage = .appearance
 
     var body: some View {
-        // Pinned open: there are four pages and no reason to ever hide them,
-        // so the sidebar stays and its toggle button goes.
+        // Pinned open: the pages are the whole navigation here and there is no
+        // reason to ever hide them, so the sidebar stays and its toggle goes.
         NavigationSplitView(columnVisibility: .constant(.all)) {
             List(SettingsPage.allCases, selection: $page) { item in
                 Label(item.label, systemImage: item.symbol)
@@ -52,7 +65,10 @@ struct SettingsView: View {
                 case .appearance: AppearanceSettings()
                 case .notch: NotchSettings()
                 case .expanding: ExpandingSettings()
-                case .behaviour: BehaviourSettings()
+                case .notifications: NotificationSettings()
+                case .powerNetwork: PowerNetworkSettings()
+                case .dockMenuBar: DockMenuBarSettings()
+                case .permissions: PermissionSettings()
                 }
             }
             .formStyle(.grouped)
@@ -237,11 +253,10 @@ private struct ExpandingSettings: View {
     }
 }
 
-// MARK: - Behaviour
+// MARK: - Notifications
 
-private struct BehaviourSettings: View {
+private struct NotificationSettings: View {
     @EnvironmentObject var store: FleetStore
-    @AppStorage("showMenuBarExtra") private var showMenuBarExtra = false
 
     var body: some View {
         Form {
@@ -249,24 +264,72 @@ private struct BehaviourSettings: View {
                 Toggle("Notify when a session needs you", isOn: $store.notifyOnAttention)
                 Caption("Posts a notification the moment a session stops working and starts waiting on your reply.")
             }
+        }
+    }
+}
 
-            Section("Menu bar") {
-                Toggle("Show menu bar status", isOn: $showMenuBarExtra)
-                    .onChange(of: showMenuBarExtra) { _, _ in store.applyActivationPolicy() }
-                Caption("Adds a count of working and waiting sessions to the menu bar, with a jump-to menu.")
+// MARK: - Power & Network
+
+/// The three settings that do something outside the app's own window: hold the
+/// Mac awake, ask Anthropic for the plan limits, and check the connection. All
+/// off by default, and each says plainly what it does — being the exceptions to
+/// "Watchtower only reads local files", they have to.
+private struct PowerNetworkSettings: View {
+    @EnvironmentObject var store: FleetStore
+
+    var body: some View {
+        Form {
+            Section("Plan usage") {
+                Toggle("Keep the usage figures up to date", isOn: $store.pollUsage)
+                if store.pollUsage {
+                    Picker("Check every", selection: $store.usagePollMinutes) {
+                        ForEach(UsagePoller.intervals, id: \.self) { minutes in
+                            Text(minutes == 1 ? "minute" : "\(minutes) minutes").tag(minutes)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                }
+                Caption("Claude Code only refreshes these figures when something inside it asks for them, so with nothing looking they can sit an hour behind. This asks Anthropic directly instead.")
+                Caption("It reads the login Claude Code has already stored and never changes it — not even to renew it, which is Claude Code's job. The request goes to Anthropic and nowhere else.")
+                if let problem = store.usagePollProblem {
+                    Label(problem, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                        .font(.system(size: 11))
+                }
             }
 
-            Section("Power") {
+            Section("Sleep") {
                 Toggle("Keep this Mac awake while a session is working", isOn: $store.keepAwake)
                 Caption("Holds off idle sleep, the same way `caffeinate -i` does, but only while Claude is mid-turn. The moment nothing is working it lets go, so an idle Mac sleeps as it normally would. The display still sleeps, and closing the lid still suspends.")
             }
 
-            Section("Network") {
+            Section("Connection") {
                 Toggle("Check the internet connection", isOn: $store.checkInternet)
                 Caption("Adds a dot showing whether this Mac can actually reach the internet: **green** working, **amber** connected but nothing answering, **red** no connection at all.")
                 if store.checkInternet {
-                    Caption("This is the only part of Watchtower that uses the network. Every \(Int(ReachabilityMonitor.interval)) seconds it opens a connection to a public DNS resolver — Cloudflare, Google, Quad9, OpenDNS in rotation — notes whether it opened, and closes it. Nothing is sent, nothing is read, and it never contacts Anthropic or this project.")
+                    Caption("Every \(Int(ReachabilityMonitor.interval)) seconds it opens a connection to a public DNS resolver — Cloudflare, Google, Quad9, OpenDNS in rotation — notes whether it opened, and closes it. Nothing is sent, nothing is read, and it never contacts Anthropic or this project.")
                 }
+            }
+        }
+    }
+}
+
+// MARK: - Dock & Menu Bar
+
+/// Where Watchtower is allowed to put itself. These two belong together
+/// because they constrain each other: hiding the Dock icon takes the app menu
+/// with it, so the menu bar or the notch has to be there to open the window
+/// again.
+private struct DockMenuBarSettings: View {
+    @EnvironmentObject var store: FleetStore
+    @AppStorage("showMenuBarExtra") private var showMenuBarExtra = false
+
+    var body: some View {
+        Form {
+            Section("Menu bar") {
+                Toggle("Show menu bar status", isOn: $showMenuBarExtra)
+                    .onChange(of: showMenuBarExtra) { _, _ in store.applyActivationPolicy() }
+                Caption("Adds a count of working and waiting sessions to the menu bar, with a jump-to menu.")
             }
 
             Section("Dock") {
@@ -276,7 +339,17 @@ private struct BehaviourSettings: View {
                         ? "Runs Watchtower in the background, with no Dock icon and no app menu. Open it from the notch or the menu bar."
                         : "Turn on the notch or the menu bar status first. Hiding the Dock icon also hides the app menu, so without one of those there would be no way left to open Watchtower.")
             }
+        }
+    }
+}
 
+// MARK: - Permissions
+
+private struct PermissionSettings: View {
+    @EnvironmentObject var store: FleetStore
+
+    var body: some View {
+        Form {
             Section("Editor windows") {
                 if store.axTrusted {
                     Label("Accessibility access granted", systemImage: "checkmark.circle.fill")
@@ -289,6 +362,7 @@ private struct BehaviourSettings: View {
                         Button("Grant…") { store.requestAccessibility() }
                     }
                 }
+                Caption("Only the reveal button on a tile needs this — the one that jumps to the editor window running a session. Everything else works without it, and Watchtower reads window titles, never their contents.")
             }
         }
     }

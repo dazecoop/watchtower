@@ -133,6 +133,13 @@ private func storedBool(_ key: String, _ fallback: Bool) -> Bool {
         : UserDefaults.standard.bool(forKey: key)
 }
 
+/// Reads a stored integer, falling back to a default when never set.
+private func storedInt(_ key: String, _ fallback: Int) -> Int {
+    UserDefaults.standard.object(forKey: key) == nil
+        ? fallback
+        : UserDefaults.standard.integer(forKey: key)
+}
+
 /// Reads a stored number, falling back to a default when never set.
 private func storedDouble(_ key: String, _ fallback: Double) -> Double {
     UserDefaults.standard.object(forKey: key) == nil
@@ -323,6 +330,22 @@ final class FleetStore: ObservableObject {
         didSet { UserDefaults.standard.set(showThinking, forKey: "showThinking") }
     }
 
+    /// Off until asked for: polling reads the login Claude Code has stored, and
+    /// that is not something to start doing uninvited.
+    @Published var pollUsage = storedBool("pollUsage", false) {
+        didSet {
+            UserDefaults.standard.set(pollUsage, forKey: "pollUsage")
+            applyUsagePolling()
+        }
+    }
+
+    @Published var usagePollMinutes = storedInt("usagePollMinutes", 5) {
+        didSet {
+            UserDefaults.standard.set(usagePollMinutes, forKey: "usagePollMinutes")
+            applyUsagePolling()
+        }
+    }
+
     /// Off until asked for: it is the only thing in Watchtower that opens a
     /// socket, and the app's whole claim is that it does not.
     @Published var checkInternet = storedBool("checkInternet", false) {
@@ -474,6 +497,54 @@ final class FleetStore: ObservableObject {
     /// the guard is only taken while something is actually working.
     var isHoldingAwake: Bool { sleepGuard.held }
 
+    private let usagePoller = UsagePoller()
+
+    /// The last figures fetched directly, kept beside the cached ones so the
+    /// fresher of the two can win on every refresh.
+    private var polled: UsageSnapshot?
+
+    private func applyUsagePolling() {
+        guard pollUsage else {
+            usagePoller.stop()
+            polled = nil
+            refresh()
+            return
+        }
+        usagePoller.start(everyMinutes: usagePollMinutes) { [weak self] snapshot in
+            guard let self else { return }
+            self.polled = snapshot
+            self.refresh()
+        }
+    }
+
+    /// Why the last direct poll came back empty, for the settings page.
+    var usagePollProblem: String? { pollUsage ? usagePoller.lastProblem : nil }
+
+    /// Whichever account of the limits is newer. Polling can fail — an expired
+    /// login, a dropped connection — and when it does the cache is still the
+    /// best thing available, so this falls back rather than going blank.
+    private func freshestUsage(_ cached: UsageSnapshot?) -> UsageSnapshot? {
+        guard let polled else { return cached }
+        guard let cached else { return aged(polled) }
+        let cachedAt = cached.fetchedAt ?? .distantPast
+        let polledAt = polled.fetchedAt ?? .distantPast
+        return polledAt >= cachedAt ? aged(polled) : cached
+    }
+
+    /// A polled snapshot goes stale on the same clock as a cached one — if
+    /// polling stops working, its figures must not stay bright forever.
+    private func aged(_ snapshot: UsageSnapshot) -> UsageSnapshot {
+        var out = snapshot
+        let age = Date().timeIntervalSince(snapshot.fetchedAt ?? .distantPast)
+        out.stale = age > UsageSnapshot.staleAfter
+        out.limits = out.limits.map {
+            var limit = $0
+            limit.expired = $0.resetsAt.map { $0 <= Date() } ?? false
+            return limit
+        }
+        return out
+    }
+
     private func applyReachability() {
         reachability.onChange = { [weak self] status in self?.netStatus = status }
         checkInternet ? reachability.start() : reachability.stop()
@@ -569,6 +640,7 @@ final class FleetStore: ObservableObject {
         startTimer()
         observeVisibility()
         applyReachability()
+        applyUsagePolling()
     }
 
     private func stopTimer() {
@@ -712,7 +784,8 @@ final class FleetStore: ObservableObject {
                 // once a second for no reason.
                 let changed = self.sessions != snaps
                 if changed { self.sessions = snaps }
-                if self.usage != usage { self.usage = usage }
+                let merged = self.freshestUsage(usage)
+                if self.usage != merged { self.usage = merged }
                 if changed || self.ticks % 10 == 0 { self.recomputeOrder() }
                 self.applySleepGuard()
                 self.lastRefresh = Date()

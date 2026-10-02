@@ -104,16 +104,41 @@ model-specific weekly limit — with a meter, a percentage and a reset countdown
 Each limit keeps its own colour, the same one it has in the notch. The
 percentage turns amber past 75% and red past 90%.
 
-These figures come from the cache Claude Code keeps locally. Watchtower never
-contacts Anthropic itself, so the numbers are only as fresh as the last time
-Claude Code wrote them — which it does while it works, and when you run
-`/usage`. With no session open they stop moving.
+By default these figures come from a cache Claude Code keeps on disk, and
+Watchtower contacts nobody. The catch is that Claude Code only refreshes that
+cache when something inside it asks for the numbers — rendering `/usage` is
+exactly that — and nothing asks on a timer. A session can work for an hour while
+the cache sits where it was, which is why running `/usage` makes the figures
+jump.
 
 Rather than present that as current, Watchtower says so. If nothing has
 refreshed the figures for half an hour, the strip and the notch's arcs dim. And
 once a limit's window has run out, its percentage describes a window that has
-already rolled over, so it shows a dash instead of a number until Claude Code
-reports the new one.
+already rolled over, so it shows a dash instead of a number until a fresh figure
+arrives.
+
+### Keeping the figures current
+
+Optional, off by default. **Settings → Behaviour → Plan usage** turns on a poll
+that asks Anthropic for your limits directly, every 1, 5, 15 or 30 minutes.
+Turn it on and the numbers stop drifting.
+
+To do that it reads the login Claude Code has already stored — the same
+credential, from the same keychain item, read the same way Claude Code reads it.
+What it will not do:
+
+- **It never changes that login.** Not even to renew it. Renewing means rotating
+  a refresh token that Claude Code also owns, and two apps rotating the same
+  token can race in a way that signs you out. If the login has expired,
+  Watchtower polls nothing and says so in Settings until Claude Code renews it
+  for you, which it does the next time you use it.
+- **It never sends the token anywhere but Anthropic.** The address is fixed in
+  the source and redirects are refused, so there is no response that can
+  redirect the credential somewhere else.
+- **It never stores or logs it.** The token is held for one request and dropped.
+
+Leave the setting off and none of that happens — no credential is read and no
+request is made.
 
 ### Clearing idle sessions
 
@@ -228,7 +253,7 @@ assistants' usage side by side, Codenotch is the better tool.
 
 ## Settings (⌘,)
 
-Four pages down the left.
+Seven pages down the left.
 
 ### Appearance
 
@@ -256,15 +281,38 @@ Four pages down the left.
 | **Opens on** | Click, or hover with a delay from instant to a second. |
 | **Opens into** | *Summary* or *Full app* — see [above](#expanding-in-place). |
 
-### Behaviour
+### Notifications
 
 | | |
 | --- | --- |
 | **Notify when a session needs you** | A notification the moment a session stops working and starts waiting on your reply. The most useful setting here when several are running. |
-| **Menu bar status** | Off by default. Adds a working/waiting count to the menu bar with a jump-to menu. |
-| **Keep this Mac awake while a session is working** | Off by default. Holds off idle sleep while Claude is mid-turn, and lets go as soon as nothing is. See [keeping the Mac awake](#keeping-the-mac-awake). |
-| **Check the internet connection** | Off by default, and the only setting that uses the network. See [connection check](#connection-check). |
+
+### Power & Network
+
+Everything Watchtower can do beyond reading local files lives here, and all of
+it is off until you turn it on.
+
+| | |
+| --- | --- |
+| **Keep the usage figures up to date** | Asks Anthropic for your plan limits every 1, 5, 15 or 30 minutes instead of waiting for Claude Code to refresh its cache. See [keeping the figures current](#keeping-the-figures-current). |
+| **Keep this Mac awake while a session is working** | Holds off idle sleep while Claude is mid-turn, and lets go as soon as nothing is. See [keeping the Mac awake](#keeping-the-mac-awake). |
+| **Check the internet connection** | A green/amber/red dot for whether this Mac can actually reach the internet. See [connection check](#connection-check). |
+
+### Dock & Menu Bar
+
+Where Watchtower is allowed to put itself. The two settings constrain each
+other, which is why they share a page.
+
+| | |
+| --- | --- |
+| **Show menu bar status** | Off by default. Adds a working/waiting count to the menu bar with a jump-to menu. |
 | **Hide Dock icon** | Runs Watchtower in the background with no Dock icon and no app menu. Needs the notch or the menu bar status on first, since one of them has to be able to open the window again — otherwise the setting is greyed out, and turning both off later puts the Dock icon back. |
+
+### Permissions
+
+| | |
+| --- | --- |
+| **Accessibility** | Needed only by the reveal button that jumps to a session's editor window. Everything else works without it. Grant it from here, or from the banner in the window. |
 
 The toolbar also has a filter field for narrowing by name, project or title,
 and a sort control: by status, most recent, or project.
@@ -293,12 +341,20 @@ added at the end rather than pushed into the middle.
 ## Privacy
 
 Everything stays on your machine: Watchtower reads local files under
-`~/.claude`, and out of the box it makes no network requests of any kind.
+`~/.claude`, and out of the box it makes no network requests of any kind and
+reads no credentials.
 
-The one exception is the optional [connection check](#connection-check), which
-is off until you turn it on, and even then only opens a connection to a public
-DNS resolver to see whether it opens. It sends nothing, and it never contacts
-Anthropic or this project. See the FAQ for
+Two optional settings change that, both off until you turn them on:
+
+- [**Keeping the usage figures current**](#keeping-the-figures-current) reads
+  the login Claude Code already stores, and asks Anthropic for your plan limits.
+  It never changes the login and never sends it anywhere else.
+- [**The connection check**](#connection-check) opens a connection to a public
+  DNS resolver to see whether it opens. It sends nothing, and never contacts
+  Anthropic or this project.
+
+Nothing else leaves the machine under any setting: no code, no conversations, no
+telemetry, no analytics. See the FAQ for
 [what it does and does not touch](#does-it-send-my-code-or-conversations-anywhere),
 and how to verify that yourself.
 
@@ -343,11 +399,14 @@ that is all. Nothing is uploaded, and there is no telemetry or analytics. Plan
 usage figures come from a cache Claude Code keeps on disk, not from a request
 to Anthropic.
 
-Turning on the [connection check](#connection-check) is the only thing that
-makes Watchtower use the network, and all it does is open a TCP connection to
-port 53 on a public DNS resolver and close it again. No request is sent, no
-response is read, and nothing identifying the machine leaves it. You can watch
-exactly that with `nettop -p Watchtower`, or leave it off.
+Two optional settings use the network, both off by default, and neither sends
+anything of yours. The [connection check](#connection-check) opens a TCP
+connection to port 53 on a public DNS resolver and closes it — no request sent,
+no response read. [Keeping the usage figures current](#keeping-the-figures-current)
+asks Anthropic for your plan limits, authenticated with the login Claude Code
+already stores; it sends your credential to Anthropic, who issued it, and to
+nowhere else, and it never alters it. You can watch both with
+`nettop -p Watchtower`, or leave them off.
 
 ### Can it interfere with my sessions?
 

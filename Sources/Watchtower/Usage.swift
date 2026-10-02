@@ -49,6 +49,48 @@ struct UsageSnapshot: Equatable {
     static let staleAfter: TimeInterval = 30 * 60
 }
 
+extension UsageLimit {
+    /// The `limits` array, which Anthropic returns in the same shape whether it
+    /// arrives through Claude Code's cache or straight off the endpoint — so
+    /// both readers share this and cannot drift apart.
+    static func parse(_ rows: [[String: Any]], now: Date) -> [UsageLimit] {
+        rows.compactMap { row in
+            guard let percent = row["percent"] as? Int else { return nil }
+            let kind = row["kind"] as? String ?? ""
+            let scopeName = ((row["scope"] as? [String: Any])?["model"] as? [String: Any])?["display_name"] as? String
+
+            let label: String
+            switch kind {
+            case "session": label = "Session"
+            case "weekly_all": label = "Weekly"
+            case "weekly_scoped": label = scopeName.map { "Weekly \($0)" } ?? "Weekly"
+            default: label = kind.replacingOccurrences(of: "_", with: " ").capitalized
+            }
+
+            let resets = resetDate(row["resets_at"])
+            return UsageLimit(
+                id: kind + (scopeName ?? ""),
+                label: label,
+                percent: percent,
+                resetsAt: resets,
+                severity: row["severity"] as? String ?? "normal",
+                expired: resets.map { $0 <= now } ?? false
+            )
+        }
+    }
+
+    /// Fractional seconds here run to six digits, which ISO8601DateFormatter
+    /// won't take, so drop the fraction before parsing.
+    private static func resetDate(_ value: Any?) -> Date? {
+        guard var text = value as? String else { return nil }
+        if let dot = text.firstIndex(of: "."),
+           let zoneStart = text[dot...].firstIndex(where: { $0 == "+" || $0 == "-" || $0 == "Z" }) {
+            text.removeSubrange(dot..<zoneStart)
+        }
+        return ISO8601DateFormatter().date(from: text)
+    }
+}
+
 /// Reads the usage figures Claude Code caches in ~/.claude.json after it polls
 /// the account's limits. Watchtower never fetches them itself, so a figure is
 /// only as fresh as the last time Claude Code wrote one: the JSON is re-parsed
@@ -63,8 +105,6 @@ final class UsageReader {
     private var rows: [[String: Any]] = []
     private var fetchedAt: Date?
     private var loaded = false
-
-    private let iso = ISO8601DateFormatter()
 
     func poll() -> UsageSnapshot? {
         reload()
@@ -99,41 +139,8 @@ final class UsageReader {
         snapshot.fetchedAt = fetchedAt
         snapshot.stale = fetchedAt.map { now.timeIntervalSince($0) > UsageSnapshot.staleAfter } ?? true
 
-        for row in rows {
-            guard let percent = row["percent"] as? Int else { continue }
-            let kind = row["kind"] as? String ?? ""
-            let scopeName = ((row["scope"] as? [String: Any])?["model"] as? [String: Any])?["display_name"] as? String
-
-            let label: String
-            switch kind {
-            case "session": label = "Session"
-            case "weekly_all": label = "Weekly"
-            case "weekly_scoped": label = scopeName.map { "Weekly \($0)" } ?? "Weekly"
-            default: label = kind.replacingOccurrences(of: "_", with: " ").capitalized
-            }
-
-            let resets = date(row["resets_at"])
-            snapshot.limits.append(UsageLimit(
-                id: kind + (scopeName ?? ""),
-                label: label,
-                percent: percent,
-                resetsAt: resets,
-                severity: row["severity"] as? String ?? "normal",
-                expired: resets.map { $0 <= now } ?? false
-            ))
-        }
+        snapshot.limits = UsageLimit.parse(rows, now: now)
 
         return snapshot
-    }
-
-    /// Fractional seconds here run to six digits, which ISO8601DateFormatter
-    /// won't take, so drop the fraction before parsing.
-    private func date(_ value: Any?) -> Date? {
-        guard var text = value as? String else { return nil }
-        if let dot = text.firstIndex(of: "."),
-           let zoneStart = text[dot...].firstIndex(where: { $0 == "+" || $0 == "-" || $0 == "Z" }) {
-            text.removeSubrange(dot..<zoneStart)
-        }
-        return iso.date(from: text)
     }
 }

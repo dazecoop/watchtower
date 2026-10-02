@@ -19,6 +19,7 @@ everything is SwiftUI and AppKit.
 | `Fleet.swift` | `FleetEngine` (all filesystem work, on one background queue) and `FleetStore` (the `@MainActor` view model and preferences). |
 | `TranscriptTail.swift` | Incremental follower for a session's `.jsonl`. |
 | `Usage.swift` / `UsageBar.swift` | Plan-limit parsing and the bottom strip. |
+| `UsagePoller.swift` | The optional direct usage poll, and the credential lookup it needs. |
 | `Reachability.swift` | The optional connection check. |
 | `SleepGuard.swift` | The optional power assertion. |
 | `WindowFocuser.swift` | Accessibility-based editor window focusing. |
@@ -371,6 +372,56 @@ session for as long as it is on. Clean up clears the current ones and leaves
 the next one alone, so the two are offered separately and the toolbar drops the
 clean-up button entirely while the filter is on.
 
+## Polling usage directly
+
+Claude Code's cache is demand-driven, not scheduled. Decompiled, the gate is:
+
+```js
+e3n = 300000                                  // five minutes
+function i_t(e, n) {
+  let { lastReadAt: r } = jZ();
+  if (e > r && Date.now() - r > e3n) Zst(n)   // only when something asks
+}
+```
+
+Something inside Claude Code has to *ask* for usage before it refreshes, and the
+five minutes is a floor on how often asking can trigger a fetch — not a timer.
+Rendering `/usage` asks. A session quietly working for an hour does not, which is
+the whole bug: the figures are not slow to arrive, nothing has sent for them.
+
+So the only way to a current number is to make the request ourselves, which is
+what `UsagePoller` does — the same `GET {base}/api/oauth/usage` with a bearer
+token, parsed by the same `UsageLimit.parse` the cache reader uses, so the two
+paths cannot drift.
+
+`Credentials` finds the token where Claude Code puts it: the keychain item
+`Claude Code-credentials` under the login name, read through `/usr/bin/security`.
+Going through that tool rather than `SecItemCopyMatching` is deliberate — the
+item's access list names `security`, because `security` created it, so this is
+the one route that does not raise a keychain prompt on every poll. The plaintext
+`~/.claude/.credentials.json` is the fallback for installs that keep it there.
+The service name gains a hash suffix when `CLAUDE_CONFIG_DIR` is set; a GUI app
+inherits no shell environment and so cannot know that, which the file fallback
+covers.
+
+Three rules the poller keeps, and the reasons they are rules rather than
+preferences:
+
+- **It never writes a credential, including refreshing one.** The refresh token
+  belongs to Claude Code too, and refreshing rotates it. Two processes rotating
+  the same token race, and the loser's copy is dead — which signs you out of
+  Claude Code. An expired token is treated as no token, and Claude Code renews
+  it in its own time.
+- **The host is compiled in and redirects are refused** (`NoRedirects`). A
+  bearer token that follows a 302 is a bearer token handed to a stranger.
+- **The token lives for one request.** Not cached, not logged, not written.
+
+`FleetStore.freshestUsage` takes whichever of the cached and polled snapshots
+carries the later `fetchedAt`, so a failed poll falls back to the cache instead
+of blanking the readout, and `aged` re-runs the staleness and expiry rules over
+a polled snapshot on every refresh — polling that quietly stops working must not
+leave its last figures looking current forever.
+
 ## Connection check
 
 Off by default, and the only code in Watchtower that opens a socket — which is
@@ -456,15 +507,28 @@ instead, which is the point of them — nothing bleeds through.
 
 ## Settings (⌘,)
 
-- **Theme** and **Columns** (dynamic, or a fixed 1–4).
-- **Render markdown** — shows `**bold**` and backticks as formatting rather
-  than raw syntax. On by default.
-- **Show thinking indicator**.
-- **Notify when a session needs you** — posts a macOS notification the moment a
-  session stops working and starts waiting on your reply. This is the one worth
-  leaving on when several sessions are running.
-- **Show menu bar status** — off by default. Adds a working/waiting count to
-  the menu bar with a jump-to-session menu.
+Seven pages in a pinned sidebar: Appearance, Notch, Expanding, Notifications,
+Power & Network, Dock & Menu Bar, Permissions.
+
+The split is by what a setting *touches*, not by what kind of thing it is.
+Appearance, Notch and Expanding are the window and the bezel. Then:
+
+- **Notifications** — the one thing that interrupts you.
+- **Power & Network** — everything Watchtower can do beyond reading local
+  files: polling usage, holding off sleep, checking the connection. All off by
+  default. Keeping them on one page is the point: it is the page to read if you
+  want to know what this app does outside its own window, and the answer is
+  nothing until you say so.
+- **Dock & Menu Bar** — where the app may put itself. These two share a page
+  because they constrain each other: hiding the Dock icon takes the app menu
+  with it, so the menu bar or the notch has to remain as a way back in.
+- **Permissions** — the Accessibility grant, and what it is and is not used
+  for. Thin, but it is where people look when the reveal button misbehaves.
+
+This replaced a single **Behaviour** page, which had become the page for
+anything that was not appearance or the notch — alerts, the menu bar, the Dock,
+a permission prompt, then polling, sleep and the network on top. That is not a
+subject, it is a leftover, and it was only going to keep growing.
 
 The toolbar also has a filter field for narrowing by name, project or title.
 
