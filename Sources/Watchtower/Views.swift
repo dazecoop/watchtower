@@ -30,7 +30,7 @@ struct RootView: View {
                 }
 
                 if store.visible.isEmpty {
-                    EmptyState(filtered: !store.sessions.isEmpty)
+                    EmptyState(reason: store.emptyReason)
                 } else {
                     ScrollView {
                         LazyVGrid(columns: columns, spacing: 14) {
@@ -93,6 +93,21 @@ struct RootView: View {
             }
             .toggleStyle(.button)
             .help("Hide idle sessions")
+
+            // Clears idle sessions out of the app only — nothing is sent to
+            // the sessions themselves, and any that stirs comes back on its own.
+            // Pointless alongside the bolt filter, which hides them all anyway.
+            if !store.activeOnly {
+                Button {
+                    if store.hasCleanedUp { store.restoreCleanedUp() } else { store.cleanUp() }
+                } label: {
+                    Image(systemName: store.hasCleanedUp ? "arrow.uturn.backward" : "sparkles")
+                }
+                .disabled(!store.hasCleanedUp && store.cleanableCount == 0)
+                .help(store.hasCleanedUp
+                      ? "Bring back the sessions you cleaned up"
+                      : "Clean up: hide \(store.cleanableCount) idle session\(store.cleanableCount == 1 ? "" : "s") from Watchtower")
+            }
 
             Menu {
                 Picker("Theme", selection: $store.theme) {
@@ -600,19 +615,17 @@ struct ThinkingStrip: View {
 // MARK: - Empty state
 
 private struct EmptyState: View {
-    let filtered: Bool
+    let reason: FleetStore.EmptyReason
 
     var body: some View {
         VStack(spacing: 10) {
             Spacer()
-            Image(systemName: filtered ? "bolt.slash" : "binoculars")
+            Image(systemName: reason.symbol)
                 .font(.system(size: 34, weight: .light))
                 .foregroundStyle(.tertiary)
-            Text(filtered ? "No active sessions" : "No Claude sessions running")
+            Text(reason.title)
                 .font(.system(size: 14, weight: .medium, design: .rounded))
-            Text(filtered
-                 ? "Everything is idle. Turn off the bolt filter to see them all."
-                 : "Start Claude Code in a project and it will appear here within a second.")
+            Text(reason.detail)
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

@@ -205,6 +205,103 @@ final class FleetStore: ObservableObject {
     private var displayOrder: [String] = []
     private let quietPeriod: TimeInterval = 30
 
+    /// Sessions cleaned up out of the way, against the activity timestamp they
+    /// carried when they were dismissed. Watchtower only reads Claude's files,
+    /// so this hides a session here and nothing more — the session itself is
+    /// untouched, and stirring again brings it straight back (see `listed`).
+    /// Deliberately not persisted: a tidy-up applies to the fleet in front of
+    /// you, not to every launch from here on.
+    private var dismissed: [String: Date] = [:]
+
+    /// Everything the app shows before sorting and the other filters: the
+    /// fleet, less whatever is still sitting cleaned up.
+    var listed: [SessionSnapshot] {
+        dismissed.isEmpty ? sessions : sessions.filter { !isDismissed($0) }
+    }
+
+    /// How many sessions a tidy-up would clear right now, which is what decides
+    /// whether offering one makes any sense. Counted off `listed` rather than
+    /// `visible` because the overlay lists sessions the app's own filters have
+    /// nothing to say about.
+    var cleanableCount: Int {
+        listed.filter { $0.state == .dormant }.count
+    }
+
+    /// Hides every idle session. Ones that wake up, and ones that appear later,
+    /// are unaffected.
+    func cleanUp() {
+        for session in listed where session.state == .dormant {
+            dismissed[session.id] = session.lastActivity
+        }
+        recomputeOrder(force: true)
+    }
+
+    /// Brings everything cleaned up back.
+    func restoreCleanedUp() {
+        guard !dismissed.isEmpty else { return }
+        dismissed.removeAll()
+        recomputeOrder(force: true)
+    }
+
+    var hasCleanedUp: Bool { !dismissed.isEmpty }
+
+    /// Why there is nothing on screen, so the empty state can say what to do
+    /// about it rather than blame the wrong filter.
+    enum EmptyReason {
+        case noSessions, cleanedUp, filtered
+
+        var symbol: String {
+            switch self {
+            case .noSessions: return "binoculars"
+            case .cleanedUp: return "sparkles"
+            case .filtered: return "bolt.slash"
+            }
+        }
+
+        var title: String {
+            switch self {
+            case .noSessions: return "No Claude sessions running"
+            case .cleanedUp: return "All cleaned up"
+            case .filtered: return "No active sessions"
+            }
+        }
+
+        var detail: String {
+            switch self {
+            case .noSessions:
+                return "Start Claude Code in a project and it will appear here within a second."
+            case .cleanedUp:
+                return "The idle sessions are hidden here only, and still running. Show all brings them back, as will any of them stirring."
+            case .filtered:
+                return "Everything is idle. Turn off the bolt filter to see them all."
+            }
+        }
+    }
+
+    var emptyReason: EmptyReason {
+        if sessions.isEmpty { return .noSessions }
+        if listed.isEmpty { return .cleanedUp }
+        return .filtered
+    }
+
+    /// A dismissal lasts only as long as the session stays as it was. Anything
+    /// new in its transcript, or any state other than idle, and it is back.
+    private func isDismissed(_ session: SessionSnapshot) -> Bool {
+        guard let at = dismissed[session.id] else { return false }
+        return session.state == .dormant && session.lastActivity <= at
+    }
+
+    /// Drops dismissals that no longer hold, so a session that has woken up is
+    /// not quietly re-hidden if it later goes idle again.
+    private func pruneDismissed() {
+        guard !dismissed.isEmpty else { return }
+        let live = Dictionary(sessions.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        dismissed = dismissed.filter { id, at in
+            guard let session = live[id] else { return false }
+            return session.state == .dormant && session.lastActivity <= at
+        }
+    }
+
     // MARK: Preferences
 
     @Published var theme: Theme =
@@ -374,7 +471,9 @@ final class FleetStore: ObservableObject {
     /// explicitly changes how the grid is sorted or filtered. Otherwise tiles
     /// keep their slots; new sessions are appended rather than inserted.
     func recomputeOrder(force: Bool = false) {
-        var pool = activeOnly ? sessions.filter { $0.state != .dormant } : sessions
+        pruneDismissed()
+        let shown = listed
+        var pool = activeOnly ? shown.filter { $0.state != .dormant } : shown
         let needle = query.trimmingCharacters(in: .whitespaces).lowercased()
         if !needle.isEmpty {
             pool = pool.filter {

@@ -7,6 +7,16 @@ struct UsageLimit: Identifiable, Equatable {
     let resetsAt: Date?
     let severity: String
 
+    /// `resets_at` has passed, so this percentage describes a window that has
+    /// already rolled over. Whatever has been used in the new window is
+    /// unknown until Claude Code polls again, so the figure must not be shown
+    /// as if it were current.
+    var expired: Bool = false
+
+    /// The percentage as shown, or a dash once the window it describes has
+    /// rolled over and the live figure is unknown.
+    var figure: String { expired ? "—" : "\(percent)%" }
+
     /// Used when the window is too narrow for the full label.
     var shortLabel: String {
         if label == "Session" { return "5h" }
@@ -14,8 +24,10 @@ struct UsageLimit: Identifiable, Equatable {
         return label.replacingOccurrences(of: "Weekly ", with: "")
     }
 
-    /// Falls back to the percentage when the API doesn't classify it.
+    /// Falls back to the percentage when the API doesn't classify it. An
+    /// expired window carries no severity: the old one no longer applies.
     var level: Int {
+        if expired { return 0 }
         switch severity {
         case "critical", "exceeded": return 2
         case "warning": return 1
@@ -27,38 +39,67 @@ struct UsageLimit: Identifiable, Equatable {
 struct UsageSnapshot: Equatable {
     var limits: [UsageLimit] = []
     var fetchedAt: Date?
+
+    /// Nothing has refreshed these figures in a while. Claude Code only writes
+    /// them while it is running, so with no session open they freeze at
+    /// whatever was last seen.
+    var stale: Bool = false
+
+    /// How old the cache may get before it stops counting as current.
+    static let staleAfter: TimeInterval = 30 * 60
 }
 
 /// Reads the usage figures Claude Code caches in ~/.claude.json after it polls
-/// the account's limits. Re-parsed only when the file's mtime changes.
+/// the account's limits. Watchtower never fetches them itself, so a figure is
+/// only as fresh as the last time Claude Code wrote one: the JSON is re-parsed
+/// when its mtime changes, but the snapshot is rebuilt on every poll so that
+/// windows expiring and the cache going stale are noticed without a write.
 final class UsageReader {
     private let url = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".claude.json")
     private var lastModified: Date?
-    private var cached: UsageSnapshot?
+
+    /// The last successfully parsed payload, kept raw so the derived snapshot
+    /// can be re-evaluated against the current time.
+    private var rows: [[String: Any]] = []
+    private var fetchedAt: Date?
+    private var loaded = false
 
     private let iso = ISO8601DateFormatter()
 
     func poll() -> UsageSnapshot? {
-        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
-              let modified = attrs[.modificationDate] as? Date else { return cached }
+        reload()
+        guard loaded else { return nil }
+        return snapshot(now: Date())
+    }
 
-        if let last = lastModified, last == modified { return cached }
+    /// Re-reads the file only when it has changed on disk. A parse failure
+    /// leaves the previous payload in place rather than blanking the readout.
+    private func reload() {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let modified = attrs[.modificationDate] as? Date else { return }
+
+        if let last = lastModified, last == modified { return }
         lastModified = modified
 
         guard let data = try? Data(contentsOf: url),
               let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let blob = root["cachedUsageUtilization"] as? [String: Any],
               let util = blob["utilization"] as? [String: Any]
-        else { return cached }
-
-        var snapshot = UsageSnapshot()
-        if let ms = blob["fetchedAtMs"] as? Double {
-            snapshot.fetchedAt = Date(timeIntervalSince1970: ms / 1000)
-        }
+        else { return }
 
         // `limits` is the same list Claude's own usage panel renders, so new
         // limit kinds appear here without needing a code change.
-        for row in (util["limits"] as? [[String: Any]] ?? []) {
+        rows = util["limits"] as? [[String: Any]] ?? []
+        fetchedAt = (blob["fetchedAtMs"] as? Double).map { Date(timeIntervalSince1970: $0 / 1000) }
+        loaded = true
+    }
+
+    private func snapshot(now: Date) -> UsageSnapshot {
+        var snapshot = UsageSnapshot()
+        snapshot.fetchedAt = fetchedAt
+        snapshot.stale = fetchedAt.map { now.timeIntervalSince($0) > UsageSnapshot.staleAfter } ?? true
+
+        for row in rows {
             guard let percent = row["percent"] as? Int else { continue }
             let kind = row["kind"] as? String ?? ""
             let scopeName = ((row["scope"] as? [String: Any])?["model"] as? [String: Any])?["display_name"] as? String
@@ -71,16 +112,17 @@ final class UsageReader {
             default: label = kind.replacingOccurrences(of: "_", with: " ").capitalized
             }
 
+            let resets = date(row["resets_at"])
             snapshot.limits.append(UsageLimit(
                 id: kind + (scopeName ?? ""),
                 label: label,
                 percent: percent,
-                resetsAt: date(row["resets_at"]),
-                severity: row["severity"] as? String ?? "normal"
+                resetsAt: resets,
+                severity: row["severity"] as? String ?? "normal",
+                expired: resets.map { $0 <= now } ?? false
             ))
         }
 
-        cached = snapshot
         return snapshot
     }
 

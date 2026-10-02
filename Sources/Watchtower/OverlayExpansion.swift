@@ -33,7 +33,7 @@ enum OverlayExpansion {
     /// most recently quiet, so the panel leads with what needs you.
     @MainActor
     static func rows(_ store: FleetStore) -> [SessionSnapshot] {
-        let ranked = store.sessions.sorted {
+        let ranked = store.listed.sorted {
             $0.state == $1.state ? $0.lastActivity > $1.lastActivity : $0.state < $1.state
         }
         return Array(ranked.prefix(maxRows))
@@ -86,7 +86,7 @@ struct ExpandedPanel: View {
             header
 
             if rows.isEmpty {
-                Text("No Claude sessions running")
+                Text(store.hasCleanedUp ? "All cleaned up" : "No Claude sessions running")
                     .font(.system(size: 12, design: .rounded))
                     .foregroundStyle(.white.opacity(0.4))
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -117,6 +117,12 @@ struct ExpandedPanel: View {
 
             Spacer(minLength: 0)
 
+            if store.hasCleanedUp {
+                NotchChip(text: "Show all") { if !measuring { store.restoreCleanedUp() } }
+            } else if store.cleanableCount > 0 {
+                NotchChip(text: "Clean up") { if !measuring { store.cleanUp() } }
+            }
+
             NotchChip(text: "Open") { if !measuring { onOpenApp() } }
         }
     }
@@ -141,7 +147,7 @@ struct ExpandedPanel: View {
                         .frame(width: 6, height: 6)
                     Text(limit.shortLabel)
                         .foregroundStyle(.white.opacity(0.45))
-                    Text("\(limit.percent)%")
+                    Text(limit.figure)
                         .foregroundStyle(Color.forSeverity(limit.level) ?? .white.opacity(0.85))
                         .monospacedDigit()
                 }
@@ -149,6 +155,7 @@ struct ExpandedPanel: View {
             }
             Spacer(minLength: 0)
         }
+        .opacity((store.usage?.stale ?? false) ? 0.55 : 1)
     }
 }
 
@@ -218,9 +225,7 @@ struct ExpandedAppPanel: View {
 
             if store.visible.isEmpty {
                 Spacer(minLength: 0)
-                Text(store.sessions.isEmpty
-                     ? "No Claude sessions running"
-                     : "Everything is idle. Turn off the bolt filter to see them all.")
+                Text(store.emptyReason.detail)
                     .font(.system(size: 12))
                     .foregroundStyle(.white.opacity(0.4))
                 Spacer(minLength: 0)
@@ -268,6 +273,19 @@ struct ExpandedAppPanel: View {
 
             NotchControl(symbol: "bolt.fill", on: store.activeOnly, help: "Hide idle sessions") {
                 store.activeOnly.toggle()
+            }
+            // In-app only: the sessions are left alone, and any that stirs
+            // reappears on its own.
+            if store.hasCleanedUp {
+                NotchControl(symbol: "arrow.uturn.backward", on: true,
+                             help: "Bring back the sessions you cleaned up") {
+                    store.restoreCleanedUp()
+                }
+            } else if store.cleanableCount > 0 {
+                NotchControl(symbol: "sparkles", on: false,
+                             help: "Clean up: hide \(store.cleanableCount) idle session\(store.cleanableCount == 1 ? "" : "s") from Watchtower") {
+                    store.cleanUp()
+                }
             }
             NotchControl(symbol: store.paused ? "play.fill" : "pause.fill",
                          on: store.paused,

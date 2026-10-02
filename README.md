@@ -41,7 +41,7 @@ have never run Claude Code, there will be nothing to show.
   <img src="docs/download-macos.png" alt="Download for macOS" width="236">
 </a>
 
-1. Download `Watchtower-1.3.0.dmg` from the
+1. Download `Watchtower-1.4.0.dmg` from the
    [latest release](https://github.com/dazecoop/watchtower/releases/latest).
 2. Open it and drag **Watchtower** into **Applications**.
 3. Launch it.
@@ -105,9 +105,29 @@ Each limit keeps its own colour, the same one it has in the notch. The
 percentage turns amber past 75% and red past 90%.
 
 These figures come from the cache Claude Code keeps locally. Watchtower never
-contacts Anthropic itself, so the numbers refresh when Claude Code refreshes
-them. If nothing has updated them for half an hour the strip dims rather than
-presenting stale numbers as current.
+contacts Anthropic itself, so the numbers are only as fresh as the last time
+Claude Code wrote them — which it does while it works, and when you run
+`/usage`. With no session open they stop moving.
+
+Rather than present that as current, Watchtower says so. If nothing has
+refreshed the figures for half an hour, the strip and the notch's arcs dim. And
+once a limit's window has run out, its percentage describes a window that has
+already rolled over, so it shows a dash instead of a number until Claude Code
+reports the new one.
+
+### Clearing idle sessions
+
+Sessions you have finished with pile up. **Clean up** (the ✨ in the toolbar,
+in the notch's header, or `⇧⌘K`) hides every idle session from the app.
+
+It hides them here and nothing more — the sessions themselves are untouched,
+exactly as read-only as everything else Watchtower does. Any of them that
+stirs comes straight back on its own, and so does anything that starts later.
+The button turns into **↶** to bring them all back at once.
+
+This is not the same as the **⚡** filter, which hides idle sessions for as
+long as it is on. Clean up clears the ones in front of you now and leaves the
+next one alone.
 
 ### Jumping to a session
 
@@ -221,6 +241,7 @@ and a sort control: by status, most recent, or project.
 | `⌘R` | Refresh now |
 | `⌘P` | Pause / resume live updates |
 | `⌘L` | Show active sessions only |
+| `⇧⌘K` | Clean up idle sessions / bring them back |
 | `⇧⌘O` | Show / hide the notch |
 | `⌘,` | Settings |
 

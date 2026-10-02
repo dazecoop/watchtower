@@ -538,7 +538,7 @@ final class OverlayController: ObservableObject {
     /// word and its timer are deliberately absent: they live in a fixed-width
     /// column, so they must never re-measure the panel.
     private func signature(_ store: FleetStore) -> String {
-        let limits = (store.usage?.limits.prefix(3) ?? []).map { "\($0.shortLabel)\($0.percent)" }
+        let limits = (store.usage?.limits.prefix(3) ?? []).map { "\($0.shortLabel)\($0.figure)" }
         return [
             store.overlayEdge.rawValue,
             String(format: "%.2f", store.overlayScale),
@@ -546,7 +546,9 @@ final class OverlayController: ObservableObject {
             "\(store.overlaySweep)",
             "\(store.overlayFlushStart)\(store.overlayFlushEnd)",
             limits.joined(separator: ","),
-            "\(store.workingCount)/\(store.waitingCount)/\(store.sessions.count)"
+            "\(store.workingCount)/\(store.waitingCount)/\(store.sessions.count)",
+            // Cleaning up changes both the row count and the header's chips.
+            "\(store.listed.count)/\(store.hasCleanedUp)/\(store.cleanableCount > 0)"
         ].joined(separator: "|")
     }
 

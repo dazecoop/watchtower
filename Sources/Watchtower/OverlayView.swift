@@ -182,9 +182,14 @@ struct OverlayContent: View {
     }
 
     /// The limit closest to biting, which is the number worth printing.
+    /// Expired windows are skipped: their percentage is no longer the live one.
     private var headline: UsageLimit? {
-        limits.max { $0.percent < $1.percent }
+        limits.filter { !$0.expired }.max { $0.percent < $1.percent }
     }
+
+    /// Claude Code writes these figures only while it runs, so with nothing
+    /// open they freeze. Fade the gauge rather than present them as current.
+    private var usageStale: Bool { store.usage?.stale ?? false }
 
     private var fleet: FleetMood {
         if store.workingCount > 0 { return .working }
@@ -333,13 +338,14 @@ struct OverlayContent: View {
 
     private var collapsedFace: some View {
         VStack(spacing: round(2 * m.scale)) {
-            UsageGauge(limits: limits, mood: fleet, metrics: m)
+            UsageGauge(limits: limits, mood: fleet, metrics: m, stale: usageStale)
 
             if let headline {
                 Text("\(headline.percent)%")
                     .font(.system(size: m.percent, weight: .semibold, design: .rounded))
                     .foregroundStyle(Color.forSeverity(headline.level) ?? .white.opacity(0.92))
                     .monospacedDigit()
+                    .opacity(usageStale ? 0.5 : 1)
             }
         }
         .fixedSize()
@@ -389,7 +395,10 @@ struct OverlayContent: View {
                      : counts.joined(separator: " · "))
 
         if !limits.isEmpty {
-            lines.append(limits.map { "\($0.label) \($0.percent)%" }.joined(separator: " · "))
+            let figures = limits
+                .map { "\($0.label) \($0.figure)" }
+                .joined(separator: " · ")
+            lines.append(usageStale ? "\(figures) (not current)" : figures)
         }
 
         if let busy = store.sessions
@@ -451,6 +460,9 @@ private struct UsageGauge: View {
     let mood: FleetMood
     let metrics: OverlayMetrics
 
+    /// Nothing has refreshed the figures in a while.
+    var stale = false
+
     var body: some View {
         ZStack {
             ForEach(Array(limits.enumerated()), id: \.element.id) { index, limit in
@@ -474,12 +486,15 @@ private struct UsageGauge: View {
                 .strokeBorder(Color.white.opacity(0.11), lineWidth: metrics.ring)
             Circle()
                 .inset(by: metrics.ring / 2)
-                .trim(from: 0, to: min(1, Double(limit.percent) / 100))
+                // An expired window's figure describes a window that has
+                // already rolled over, so draw no arc for it at all.
+                .trim(from: 0, to: limit.expired ? 0 : min(1, Double(limit.percent) / 100))
                 .stroke(Color.forLimit(index),
                         style: StrokeStyle(lineWidth: metrics.ring, lineCap: .round))
                 // Trims start at three o'clock; usage reads better from the top.
                 .rotationEffect(.degrees(-90))
-                .animation(.easeOut(duration: 0.5), value: limit.percent)
+                .opacity(stale ? 0.45 : 1)
+                .animation(.easeOut(duration: 0.5), value: limit.expired ? 0 : limit.percent)
         }
         .padding(inset)
     }

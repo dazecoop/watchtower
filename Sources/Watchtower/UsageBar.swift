@@ -28,7 +28,7 @@ struct UsageBar: View {
                 Rectangle().fill(.ultraThinMaterial)
             }
         }
-        .opacity(isStale ? 0.55 : 1)
+        .opacity(usage.stale ? 0.55 : 1)
     }
 
     private func row(_ detail: Detail, freshness: Bool) -> some View {
@@ -57,19 +57,17 @@ struct UsageBar: View {
         return age < 90 ? "just updated" : "updated \(shortDuration(age)) ago"
     }
 
-    /// Claude Code refreshes these figures as it works; if nothing has for a
-    /// while, dim the bar rather than present old numbers as current.
-    private var isStale: Bool {
-        guard let fetched = usage.fetchedAt else { return true }
-        return Date().timeIntervalSince(fetched) > 30 * 60
-    }
-
     fileprivate struct UsageMeter: View {
         let limit: UsageLimit
         let index: Int
         let detail: Detail
 
         private var tint: Color { .forLimit(index) }
+
+        /// An expired window has no figure to show: the percentage belongs to
+        /// a window that has already rolled over, and the new one is unknown
+        /// until Claude Code polls again.
+        private var fraction: Double { limit.expired ? 0 : min(1, Double(limit.percent) / 100) }
 
         var body: some View {
             HStack(spacing: detail == .minimal ? 5 : 7) {
@@ -85,18 +83,26 @@ struct UsageBar: View {
                             .frame(width: 70, height: 4)
                         Capsule()
                             .fill(tint)
-                            .frame(width: max(2, 70 * min(1, Double(limit.percent) / 100)), height: 4)
+                            .frame(width: max(2, 70 * fraction), height: 4)
+                            .opacity(limit.expired ? 0 : 1)
                     }
-                    .animation(.easeOut(duration: 0.4), value: limit.percent)
+                    .animation(.easeOut(duration: 0.4), value: fraction)
                 }
 
-                Text("\(limit.percent)%")
+                Text(limit.figure)
                     .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(Color.forSeverity(limit.level)
-                                     ?? (detail == .minimal ? tint : .primary.opacity(0.8)))
+                    .foregroundStyle(limit.expired
+                                     ? Color.primary.opacity(0.35)
+                                     : (Color.forSeverity(limit.level)
+                                        ?? (detail == .minimal ? tint : .primary.opacity(0.8))))
                     .fixedSize()
 
-                if detail == .full, let resets = limit.resetsAt {
+                if detail == .full, limit.expired {
+                    Text("window reset")
+                        .font(.system(size: 9.5))
+                        .foregroundStyle(.tertiary)
+                        .fixedSize()
+                } else if detail == .full, let resets = limit.resetsAt {
                     HStack(spacing: 3) {
                         Image(systemName: "arrow.clockwise")
                             .font(.system(size: 8))

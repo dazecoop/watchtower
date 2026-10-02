@@ -283,15 +283,34 @@ The figures come from `~/.claude.json` → `cachedUsageUtilization`, which Claud
 Code writes after polling your account limits. The `limits` array it stores is
 the same list Claude's own usage panel renders, so new limit kinds appear here
 without a code change. Nothing is fetched from the network — Watchtower only
-reads what Claude Code has already cached, and re-parses the file only when its
-mtime changes.
+reads what Claude Code has already cached.
+
+That cache is the whole supply, and it only moves when Claude Code moves it:
+while a session runs, and when you run `/usage`. With nothing open it freezes,
+which is why the reader is built to notice two things that change without the
+file changing at all. The JSON is still re-parsed only on an mtime change, but
+the *snapshot* is rebuilt from the cached rows on every poll, so both of these
+flip on their own:
+
+- **Staleness.** `fetchedAt` older than `UsageSnapshot.staleAfter` (30 minutes)
+  sets `stale`, which fades the strip, the notch's arcs and its headline.
+- **Expiry.** A limit whose `resets_at` has passed carries a percentage for a
+  window that has already rolled over. What has been used in the *new* window
+  is unknown until Claude Code reports it, so `expired` is set: the figure
+  renders as a dash, the arc is not drawn, and the limit is skipped when
+  picking the notch's headline number. Inventing a 0 would be a different lie.
+
+Because expiry is stamped into `UsageLimit` rather than computed in the views,
+the snapshot genuinely differs the moment a window rolls over, so `FleetStore`
+republishes and everything redraws — which a purely computed property would not
+have done, since nothing else need change while the fleet sits idle.
 
 Each limit has a fixed colour from `Color.forLimit(_:)`, shared with the notch
 rings so a limit reads the same in both places. Severity rides on the
 percentage text instead — amber past 75%, red past 90%, or earlier if the API
-marks a limit as warning/critical — which leaves the meter colours stable. If
-the cache hasn't been refreshed in 30 minutes the whole bar dims, rather than
-presenting stale numbers as current.
+marks a limit as warning/critical — which leaves the meter colours stable. An
+expired limit reports no severity at all: the old window's is no longer about
+anything.
 
 ## What a tile spotlights
 
@@ -324,6 +343,31 @@ swap places constantly and the grid is unreadable. The order is only rewritten
 when no session has had activity for 30 seconds, or when you change the sort
 mode or the active-only filter yourself. New sessions are appended rather than
 inserted.
+
+## Cleaning up idle sessions
+
+`FleetStore.dismissed` maps a session id to the `lastActivity` it carried when
+it was cleaned up. `listed` is the fleet less those, and every surface draws
+from it: the grid through `recomputeOrder`, the notch's summary through
+`OverlayExpansion.rows`.
+
+The dismissal is deliberately conditional rather than a plain hidden-set. It
+holds only while the session is still dormant *and* its activity has not moved
+past the timestamp recorded — so anything new in a session's transcript brings
+it straight back, with no explicit un-hiding anywhere. `pruneDismissed` then
+drops the entry, which matters: without it, a session that woke up and later
+went quiet again would be silently re-hidden by a dismissal it had already
+escaped.
+
+Nothing about this reaches the sessions themselves; it is as read-only as the
+rest of the app. It is also not persisted. A tidy-up is about the fleet in
+front of you, not a standing rule, and a hidden-sessions list surviving a
+relaunch is a bug report waiting to happen.
+
+Not to be confused with the active-only filter (`⚡`), which hides every idle
+session for as long as it is on. Clean up clears the current ones and leaves
+the next one alone, so the two are offered separately and the toolbar drops the
+clean-up button entirely while the filter is on.
 
 ## Running without a Dock icon
 
@@ -376,7 +420,7 @@ The toolbar also has a filter field for narrowing by name, project or title.
 
 ## Shortcuts
 
-`⌘R` refresh · `⌘P` pause/resume · `⌘L` active-only
+`⌘R` refresh · `⌘P` pause/resume · `⌘L` active-only · `⇧⌘K` clean up idle
 
 ## Signing
 
