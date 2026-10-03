@@ -53,6 +53,13 @@ the one macOS is quietest about and the one that wastes the most time. See
 
 <img src="docs/toolbar-status.png" alt="The toolbar: working and your-turn counts, the green connection dot, and the awake cup lit" width="560">
 
+**Glows the screen edge while something's working.** Optional. A thin band of
+colour around every screen, fading smoothly in from the true edge — visible
+even when Watchtower isn't the window in front of you. On a display with HDR
+headroom the sweep's peak renders as genuine Extended Dynamic Range, not just
+a clamped white. Settings → Screen Glow has a one-click demo, so you can see
+it without waiting for a session to start working.
+
 **Lives in the notch, the menu bar, or neither.** A small black readout on a
 screen edge that swells open into a summary of the fleet or the whole
 dashboard, without a window coming forward; a menu bar item with a jump-to

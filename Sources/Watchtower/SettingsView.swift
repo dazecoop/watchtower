@@ -15,7 +15,7 @@ import AppKit
 /// things that interrupt you, the things that reach outside the app, and the
 /// places the app can put itself.
 private enum SettingsPage: String, CaseIterable, Identifiable {
-    case appearance, notch, expanding, notifications, powerNetwork, dockMenuBar, permissions
+    case appearance, notch, expanding, screenGlow, notifications, powerNetwork, dockMenuBar, permissions
 
     var id: String { rawValue }
 
@@ -24,6 +24,7 @@ private enum SettingsPage: String, CaseIterable, Identifiable {
         case .appearance: return "Appearance"
         case .notch: return "Notch"
         case .expanding: return "Expanding"
+        case .screenGlow: return "Screen Glow"
         case .notifications: return "Notifications"
         case .powerNetwork: return "Power & Network"
         case .dockMenuBar: return "Dock & Menu Bar"
@@ -36,6 +37,7 @@ private enum SettingsPage: String, CaseIterable, Identifiable {
         case .appearance: return "paintpalette"
         case .notch: return "rectangle.topthird.inset.filled"
         case .expanding: return "arrow.up.left.and.arrow.down.right"
+        case .screenGlow: return "wand.and.rays"
         case .notifications: return "bell"
         case .powerNetwork: return "powerplug"
         case .dockMenuBar: return "dock.rectangle"
@@ -82,6 +84,7 @@ struct SettingsView: View {
                 case .appearance: AppearanceSettings()
                 case .notch: NotchSettings()
                 case .expanding: ExpandingSettings()
+                case .screenGlow: ScreenGlowSettings()
                 case .notifications: NotificationSettings()
                 case .powerNetwork: PowerNetworkSettings()
                 case .dockMenuBar: DockMenuBarSettings()
@@ -136,6 +139,42 @@ private struct AppearanceSettings: View {
                 Toggle("Render markdown", isOn: $store.renderMarkdown)
                 Caption("Shows **bold** and `code` as formatting instead of raw syntax.")
                 Toggle("Show thinking indicator", isOn: $store.showThinking)
+            }
+        }
+    }
+}
+
+// MARK: - Screen Glow
+
+private struct ScreenGlowSettings: View {
+    @EnvironmentObject var store: FleetStore
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("Glow the screen edge while a session is working", isOn: $store.edgeGlow)
+                Caption("A thin band of colour at the true edge of every screen, fading smoothly inward, that glows while any session is mid-turn — the same thing a tile's working indicator says, just visible from across the room. Follows every Space, never takes a click, and clears itself the moment nothing is working.")
+            }
+
+            Section("Demo") {
+                if store.edgeGlowDemoRunning {
+                    HStack {
+                        Label("Showing the glow — stops in \(store.edgeGlowDemoRemaining)s",
+                              systemImage: "wand.and.rays")
+                            .foregroundStyle(.secondary)
+                            .font(.system(size: 12))
+                            .contentTransition(.numericText())
+                            .animation(.default, value: store.edgeGlowDemoRemaining)
+                        Spacer()
+                        Button("Stop") { store.stopEdgeGlowDemo() }
+                    }
+                } else {
+                    HStack {
+                        Button("Show Me") { store.startEdgeGlowDemo() }
+                        Spacer()
+                    }
+                }
+                Caption("Lights up every screen edge for \(FleetStore.edgeGlowDemoDuration) seconds, exactly as it looks when a session is working — no need to wait for one. Works whether or not the toggle above is on, and stops early if you ask it to.")
             }
         }
     }

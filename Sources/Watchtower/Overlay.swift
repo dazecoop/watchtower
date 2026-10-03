@@ -504,7 +504,14 @@ final class OverlayController: ObservableObject {
         panel.animationBehavior = .utilityWindow
         // Above ordinary windows and over full-screen apps, and it follows you
         // between Spaces rather than living on the one it was created on.
-        panel.level = .statusBar
+        //
+        // One level above plain `.statusBar`: the screen-edge glow (see
+        // `EdgeGlow.swift`) sits at `.statusBar` itself, and the notch is the
+        // one thing meant to stay above it whenever both are showing. Window
+        // level is what the window server actually sorts compositing on, not
+        // which panel was created first, so this is what guarantees that
+        // rather than hoping for it.
+        panel.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
         panel.orderFrontRegardless()
 

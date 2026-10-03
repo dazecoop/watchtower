@@ -28,6 +28,7 @@ everything is SwiftUI and AppKit.
 | `Views.swift` | Grid, tiles, feed lines, thinking indicator, shimmer, the age fade. |
 | `Inspector.swift` | The popover a tile opens into, the context ring, the state pill, and the Finder/clipboard actions shared with the tile's context menu. |
 | `LoginItem.swift` | The `SMAppService` login item. |
+| `EdgeGlow.swift` | The optional screen-edge glow: `EdgeGlowPanel` (one per screen) and the `EdgeGlowController` that fades the set in and out together. |
 | `Animations.swift` | The looping animations, as Core Animation layers (see Performance). |
 | `Overlay.swift` | The notch: edge placement maths, the `NSPanel` that hosts it, dragging, click-to-reveal, and the expand/collapse lifecycle. |
 | `OverlayView.swift` | Its contents — the notch outline, the concentric usage gauge, the spinner, and the morphing geometry of the swell. |
@@ -237,6 +238,16 @@ All five cost real debugging time and are commented in place:
    The controller compares against the frame it last *asked* for, and only
    re-measures the content when a signature of the size-affecting values
    changes — never for the cycling gerund or its timer.
+
+6. **`NSWindow.Level` arithmetic can land exactly on a level that already
+   means something.** The screen-edge glow was first put one level *below*
+   the notch (`.statusBar.rawValue - 1`), which is exactly `.mainMenu` — the
+   system menu bar's own level. The menu bar won that tie along the very top
+   edge, wiping out the one strip of glow that mattered most, while every
+   other edge looked fine. Levels are a flat `Int32`, not a private
+   namespace; moving one by subtraction can walk straight into another
+   system-defined value. The fix moved the notch one level *above* plain
+   `.statusBar` instead, since nothing else was meant to sit between the two.
 
 ## How it detects sessions
 
@@ -524,6 +535,46 @@ setting, the pause, and the fleet — all route through it. The `paused` term is
 not decoration: pausing stops `refresh`, so without it the assertion would be
 held on the strength of a fleet the app had stopped looking at, and an idle Mac
 would stay awake until something happened to resume it.
+
+## Screen edge glow
+
+`EdgeGlowController.apply(_:)` is the same idempotent shape as `SleepGuard`:
+
+```swift
+edgeGlowController.apply(edgeGlow && !paused && workingCount > 0)
+```
+
+called from the same places `applySleepGuard` is. One `EdgeGlowPanel` per
+screen, click-through and non-activating for the same reasons the notch panel
+is, at `.statusBar` — one level below the notch, which moved up to
+`.statusBar + 1` so the two never land on the same level (see trap 6 above).
+
+The falloff is a true alpha gradient, not a blurred band: `maskImage` draws
+roughly eighty concentric rounded-rect outlines, each inset a point further
+and a little more transparent per `pow(1 - t, power)`, and that image becomes
+a `CALayer` mask on a `CAGradientLayer` carrying the colour sweep. Stacking
+thin strokes like this is the standard way to get a distance-based gradient
+out of Core Graphics, which has no "fade with distance from this shape"
+primitive of its own. The corners are rounded independently per side —
+`auxiliaryTopLeftArea` / `auxiliaryTopRightArea` (macOS 12+) detect a
+camera-housing display, whose bottom corners are square even though the top
+ones follow the housing's curve.
+
+The sweep's peak is rendered in `extendedSRGB` with its components scaled
+above 1.0, capped at `min(screen.maximumExtendedDynamicRangeColorComponentValue, 1.6)`.
+Core Animation renders Extended Dynamic Range automatically for a `CGColor`
+built this way and tone-maps it back down to an ordinary colour on a screen
+with no headroom, so there is no separate SDR path — the same values just
+look like a plain colour there. `maximumExtendedDynamicRangeColorComponentValue`
+is the headroom actually usable right now, which moves with the screen's
+brightness; the `…Potential…` variant is the hardware ceiling and can
+overstate what is currently available.
+
+Settings → Screen Glow's demo (`FleetStore.startEdgeGlowDemo`) forces the
+glow on for a fixed span regardless of the toggle or whether anything is
+working. `applyEdgeGlow` stands aside while it runs — the once-a-second
+refresh tick re-evaluating the real condition would otherwise fight the demo
+and turn it straight back off.
 
 ## Running without a Dock icon
 

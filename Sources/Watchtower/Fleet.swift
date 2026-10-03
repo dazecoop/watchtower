@@ -211,9 +211,15 @@ final class FleetStore: ObservableObject {
     @Published private(set) var sessions: [SessionSnapshot] = []
     private(set) var lastRefresh = Date()
     /// Pausing stops `refresh`, and with it every reassessment of whether
-    /// anything is still working — so the sleep guard has to be let go here or
-    /// it would hold on against a fleet it has stopped watching.
-    @Published var paused = false { didSet { applySleepGuard() } }
+    /// anything is still working — so the sleep guard (and the edge glow)
+    /// have to be let go here or they'd hold on against a fleet that has
+    /// stopped being watched.
+    @Published var paused = false {
+        didSet {
+            applySleepGuard()
+            applyEdgeGlow()
+        }
+    }
     @Published var activeOnly = false { didSet { recomputeOrder(force: true) } }
     @Published var sortMode: SortMode = .status { didSet { recomputeOrder(force: true) } }
 
@@ -377,6 +383,16 @@ final class FleetStore: ObservableObject {
         didSet {
             UserDefaults.standard.set(keepAwake, forKey: "keepAwake")
             applySleepGuard()
+        }
+    }
+
+    /// Glows the edge of every screen while a session is mid-turn — the
+    /// ambient, glanceable version of a tile's own working indicator. Off by
+    /// default; purely decorative, so there's no reason to force it on anyone.
+    @Published var edgeGlow = storedBool("edgeGlow", false) {
+        didSet {
+            UserDefaults.standard.set(edgeGlow, forKey: "edgeGlow")
+            applyEdgeGlow()
         }
     }
 
@@ -556,6 +572,7 @@ final class FleetStore: ObservableObject {
 
     private let reachability = ReachabilityMonitor()
     private let sleepGuard = SleepGuard()
+    private let edgeGlowController = EdgeGlowController()
 
     /// Mirrored out of the monitor so views observe the store alone.
     @Published private(set) var netStatus: NetStatus = .unknown
@@ -626,6 +643,54 @@ final class FleetStore: ObservableObject {
     /// path that leaves it held over an idle fleet.
     private func applySleepGuard() {
         sleepGuard.apply(keepAwake && !paused && workingCount > 0)
+    }
+
+    /// Same shape as `applySleepGuard`: nothing working means nothing to
+    /// glow for, whatever the setting says, decided in this one place.
+    /// Stands aside while the Settings demo is running — that's a manual
+    /// preview the person asked for, and the once-a-second refresh tick
+    /// re-evaluating this would turn it straight back off.
+    private func applyEdgeGlow() {
+        guard !edgeGlowDemoRunning else { return }
+        edgeGlowController.apply(edgeGlow && !paused && workingCount > 0)
+    }
+
+    // MARK: Screen glow demo
+
+    static let edgeGlowDemoDuration = 8
+
+    @Published private(set) var edgeGlowDemoRunning = false
+    @Published private(set) var edgeGlowDemoRemaining = 0
+    private var edgeGlowDemoTimer: Timer?
+
+    /// Forces the glow on for a fixed stretch regardless of whether anything
+    /// is actually working or the setting is even on — Settings offers this
+    /// so trying it doesn't mean waiting for a session to start a turn.
+    func startEdgeGlowDemo() {
+        edgeGlowDemoTimer?.invalidate()
+        edgeGlowDemoRunning = true
+        edgeGlowDemoRemaining = Self.edgeGlowDemoDuration
+        edgeGlowController.apply(true)
+
+        edgeGlowDemoTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.tickEdgeGlowDemo() }
+        }
+    }
+
+    private func tickEdgeGlowDemo() {
+        edgeGlowDemoRemaining -= 1
+        if edgeGlowDemoRemaining <= 0 { stopEdgeGlowDemo() }
+    }
+
+    /// Ends the preview early, or at its natural end — either way, control
+    /// of the glow goes back to whatever the real state should be rather
+    /// than just snapping it off.
+    func stopEdgeGlowDemo() {
+        edgeGlowDemoTimer?.invalidate()
+        edgeGlowDemoTimer = nil
+        edgeGlowDemoRunning = false
+        edgeGlowDemoRemaining = 0
+        applyEdgeGlow()
     }
 
     private let engine = FleetEngine()
@@ -716,6 +781,7 @@ final class FleetStore: ObservableObject {
         observeVisibility()
         applyReachability()
         applyUsagePolling()
+        applyEdgeGlow()
     }
 
     /// The nth tile on screen, for the ⌘1–⌘9 shortcuts.
@@ -870,6 +936,7 @@ final class FleetStore: ObservableObject {
                 if self.usage != merged { self.usage = merged }
                 if changed || self.ticks % 10 == 0 { self.recomputeOrder() }
                 self.applySleepGuard()
+                self.applyEdgeGlow()
                 if changed { self.applyDockBadge() }
                 self.lastRefresh = Date()
             }
