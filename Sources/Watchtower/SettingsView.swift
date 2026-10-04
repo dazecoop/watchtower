@@ -376,6 +376,10 @@ private struct PowerNetworkSettings: View {
             Section("Sleep") {
                 Toggle("Keep this Mac awake while a session is working", isOn: $store.keepAwake)
                 Caption("Holds off idle sleep, the same way `caffeinate -i` does, but only while Claude is mid-turn. The moment nothing is working it lets go, so an idle Mac sleeps as it normally would. The display still sleeps, and closing the lid still suspends.")
+                if store.keepAwake {
+                    Toggle("Also keep the display awake", isOn: $store.preventDisplaySleep)
+                    Caption("Adds `caffeinate -d`'s assertion so the screen doesn't blank mid-turn either. Still lets go the moment nothing is working, and closing the lid still suspends.")
+                }
             }
 
             Section("Connection") {

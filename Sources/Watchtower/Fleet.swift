@@ -386,6 +386,15 @@ final class FleetStore: ObservableObject {
         }
     }
 
+    /// Also holds the display awake, not just the system. Only meaningful
+    /// while `keepAwake` is on.
+    @Published var preventDisplaySleep = storedBool("preventDisplaySleep", false) {
+        didSet {
+            UserDefaults.standard.set(preventDisplaySleep, forKey: "preventDisplaySleep")
+            applySleepGuard()
+        }
+    }
+
     /// Glows the edge of every screen while a session is mid-turn — the
     /// ambient, glanceable version of a tile's own working indicator. Off by
     /// default; purely decorative, so there's no reason to force it on anyone.
@@ -642,7 +651,7 @@ final class FleetStore: ObservableObject {
     /// says. This is the only place the assertion is decided, so there is no
     /// path that leaves it held over an idle fleet.
     private func applySleepGuard() {
-        sleepGuard.apply(keepAwake && !paused && workingCount > 0)
+        sleepGuard.apply(keepAwake && !paused && workingCount > 0, preventDisplaySleep: preventDisplaySleep)
     }
 
     /// Same shape as `applySleepGuard`: nothing working means nothing to
