@@ -758,14 +758,6 @@ final class FleetStore: ObservableObject {
         visible = displayOrder.compactMap { byID[$0] }
     }
 
-    /// Compact text for the menu bar item.
-    var menuBarSummary: String {
-        if workingCount > 0 && waitingCount > 0 { return "\(workingCount)▶ \(waitingCount)◐" }
-        if workingCount > 0 { return "\(workingCount)▶" }
-        if waitingCount > 0 { return "\(waitingCount)◐" }
-        return "\(sessions.count)"
-    }
-
     var workingCount: Int { sessions.filter { $0.state == .working }.count }
     var waitingCount: Int { sessions.filter { $0.state == .waiting }.count }
 

@@ -4,11 +4,7 @@ import SwiftUI
 struct WatchtowerApp: App {
     @StateObject private var store = FleetStore()
     @StateObject private var overlay = OverlayController()
-
-    /// Deliberately @AppStorage rather than a store property: MenuBarExtra
-    /// writes back to this binding while updating, which through an
-    /// ObservableObject becomes an endless publish/render loop.
-    @AppStorage("showMenuBarExtra") private var showMenuBarExtra = false
+    @StateObject private var menuBar = MenuBarController()
 
     var body: some Scene {
         WindowGroup("Watchtower", id: AppWindow.id) {
@@ -17,6 +13,7 @@ struct WatchtowerApp: App {
                 .onAppear {
                     store.start()
                     overlay.attach(to: store)
+                    menuBar.attach(to: store)
                 }
         }
         .defaultSize(width: 1180, height: 820)
@@ -27,86 +24,6 @@ struct WatchtowerApp: App {
             SettingsView()
                 .environmentObject(store)
         }
-
-        // The string-label initializer is used deliberately: a ViewBuilder
-        // label here nests the scene's generic types deeply enough to crash
-        // the runtime while resolving metadata.
-        MenuBarExtra(store.menuBarSummary, isInserted: $showMenuBarExtra) {
-            MenuBarContent()
-                .environmentObject(store)
-        }
-
-    }
-}
-
-/// Kept deliberately flat. Nesting the session list, dividers and actions in
-/// one view made the generic type deep enough to crash the runtime.
-private struct MenuBarContent: View {
-    @EnvironmentObject var store: FleetStore
-
-    var body: some View {
-        MenuBarRows()
-        Divider()
-        MenuBarUsage()
-        Button("Open Watchtower") {
-            NSApplication.shared.activate(ignoringOtherApps: true)
-            AppWindow.reopen?()
-        }
-        SettingsLink { Text("Settings…") }
-        Divider()
-        Button("Quit Watchtower") {
-            NSApplication.shared.terminate(nil)
-        }
-    }
-}
-
-private struct MenuBarRows: View {
-    @EnvironmentObject var store: FleetStore
-
-    var body: some View {
-        if store.visible.isEmpty {
-            Text("No Claude sessions running")
-        }
-        ForEach(store.visible) { session in
-            Button(rowTitle(session)) {
-                store.focus(session)
-            }
-        }
-    }
-
-    private func rowTitle(_ session: SessionSnapshot) -> String {
-        let mark: String
-        switch session.state {
-        case .working: mark = "●"
-        case .waiting: mark = "◐"
-        case .dormant: mark = "○"
-        }
-        return "\(mark)  \(session.name) — \(session.state.label)"
-    }
-}
-
-/// The plan limits as one disabled line each, so the menu answers "how much
-/// have I got left" without opening the window.
-private struct MenuBarUsage: View {
-    @EnvironmentObject var store: FleetStore
-
-    var body: some View {
-        if let usage = store.usage, !usage.limits.isEmpty {
-            ForEach(usage.limits) { limit in
-                Text(line(limit, stale: usage.stale))
-            }
-            Divider()
-        }
-    }
-
-    private func line(_ limit: UsageLimit, stale: Bool) -> String {
-        var s = "\(limit.label)  \(limit.figure)"
-        if limit.expired {
-            s += "  · window reset"
-        } else if let resets = limit.resetsAt {
-            s += "  · resets in \(shortDuration(resets.timeIntervalSinceNow))"
-        }
-        return stale ? s + "  (not current)" : s
     }
 }
 
