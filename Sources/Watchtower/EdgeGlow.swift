@@ -211,46 +211,67 @@ final class EdgeGlowPanel: NSPanel {
         let bright = color(0.36, 0.95, 0.62, boost: peakBoost)
         let lime = color(0.62, 0.98, 0.55, boost: peakBoost)
 
+        // The mask and the clip both live on a plain, *never animated*,
+        // screen-sized layer. Keeping this one still is what lets the
+        // gradient underneath move freely without disturbing where the edge
+        // shape itself sits.
         let mask = CALayer()
         mask.frame = bounds
         mask.contents = maskImage(size: size, scale: scale)
         mask.contentsScale = scale
 
-        // The colour, swept slowly across the screen on a diagonal.
+        let clip = CALayer()
+        clip.frame = bounds
+        clip.masksToBounds = true
+        clip.mask = mask
+        // Added to `root` via `container` below, not here — it gets
+        // re-parented the moment it is, so adding it twice would be dead code.
+
+        // The colour itself is rendered once, at a fixed diagonal, onto a
+        // sublayer sized well past the screen in every direction — then the
+        // "sweep" is just that layer's *position* animating back and forth
+        // underneath the fixed mask above, the same way `ShimmerSweep` and
+        // `SpinnerArc` move in `Animations.swift`.
+        //
+        // The first version animated the gradient's own `startPoint` /
+        // `endPoint` instead, which looked identical but was far more
+        // costly: those properties define the gradient's actual pixel
+        // content, so changing them forces Core Animation to regenerate that
+        // content on every single frame, continuously, for as long as the
+        // glow is showing — and because the layer was sized to the full
+        // screen, every regeneration redrew the whole screen's worth of
+        // pixels even though well over 90% of them end up invisible behind
+        // the mask. A `position` animation moves an already-rendered texture
+        // instead of redrawing one, which is the whole reason the other
+        // looping animations in this app are built this way already.
         let gradient = CAGradientLayer()
-        gradient.frame = bounds
+        let span = CGSize(width: bounds.width * 1.8, height: bounds.height * 1.8)
+        gradient.bounds = CGRect(origin: .zero, size: span)
+        gradient.position = CGPoint(x: bounds.midX, y: bounds.midY)
         gradient.type = .axial
         gradient.colors = [deep, bright, lime, bright, deep]
         gradient.locations = [0, 0.25, 0.5, 0.75, 1]
         gradient.startPoint = CGPoint(x: 0, y: 0)
         gradient.endPoint = CGPoint(x: 1, y: 1)
-        gradient.mask = mask
+        clip.addSublayer(gradient)
 
-        let sweepStart = CABasicAnimation(keyPath: "startPoint")
-        sweepStart.fromValue = CGPoint(x: 0, y: 0)
-        sweepStart.toValue = CGPoint(x: 1, y: 0)
-        sweepStart.duration = sweepDuration
-        sweepStart.autoreverses = true
-        sweepStart.repeatCount = .greatestFiniteMagnitude
-        sweepStart.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        gradient.add(sweepStart, forKey: "sweepStart")
-
-        let sweepEnd = CABasicAnimation(keyPath: "endPoint")
-        sweepEnd.fromValue = CGPoint(x: 1, y: 1)
-        sweepEnd.toValue = CGPoint(x: 0, y: 1)
-        sweepEnd.duration = sweepDuration
-        sweepEnd.autoreverses = true
-        sweepEnd.repeatCount = .greatestFiniteMagnitude
-        sweepEnd.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        gradient.add(sweepEnd, forKey: "sweepEnd")
+        let travel = CGPoint(x: span.width * 0.22, y: span.height * 0.22)
+        let sweep = CABasicAnimation(keyPath: "position")
+        sweep.fromValue = CGPoint(x: bounds.midX - travel.x, y: bounds.midY - travel.y)
+        sweep.toValue = CGPoint(x: bounds.midX + travel.x, y: bounds.midY + travel.y)
+        sweep.duration = sweepDuration
+        sweep.autoreverses = true
+        sweep.repeatCount = .greatestFiniteMagnitude
+        sweep.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        gradient.add(sweep, forKey: "sweep")
 
         // The flat "turn it down 30%" multiplier, separate from the animated
-        // breathing pulse on the gradient itself, so the two combine (Core
-        // Animation multiplies a child's opacity by its parent's) rather
-        // than one overriding the other.
+        // breathing pulse, so the two combine (Core Animation multiplies a
+        // child's opacity by its parent's) rather than one overriding the
+        // other.
         let container = CALayer()
         container.opacity = Float(opacity)
-        container.addSublayer(gradient)
+        container.addSublayer(clip)
         root.addSublayer(container)
 
         let breathe = CABasicAnimation(keyPath: "opacity")

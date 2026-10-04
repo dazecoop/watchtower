@@ -734,6 +734,38 @@ Walking another app's Window menu is synchronous IPC into that app. It runs on
 its own queue, and the result is only published when the list actually differs
 — reassigning an identical list re-rendered the whole grid every four seconds.
 
+### Animating a layer's content vs. animating its position
+
+The lesson above is "animate layers, not SwiftUI" — but not every layer
+animation is equally cheap, and the screen glow (`EdgeGlow.swift`) first got
+this wrong in a way worth recording, since it is easy to repeat.
+
+Its colour sweep originally animated the `CAGradientLayer`'s own `startPoint`
+and `endPoint`. Those properties define the gradient's actual pixel content,
+so changing them forces Core Animation to regenerate that content on every
+frame, continuously, for as long as the glow is showing — and the layer was
+sized to the full screen, so every regeneration redrew a whole screen's worth
+of pixels even though well over 90% of them end up invisible behind the edge
+mask. Measured on Watchtower's own process alone (a noisy shared environment
+made WindowServer's absolute figures unusable, but the app's own CPU was a
+clean signal): **~4.1% average, falling to ~1.8%** after the fix below —
+with nothing else about the feature changed.
+
+The fix: render the gradient once, at a fixed diagonal, onto a layer sized
+well past the screen in every direction, then animate only its `position`
+underneath a fixed, never-animated mask. A position change is a GPU
+compositing operation on an already-rendered texture — the same category of
+cheap as the transform animations `ShimmerSweep` and `SpinnerArc` already use
+in `Animations.swift`. Nothing about the visible result changes; only which
+property moves.
+
+The general rule this generalises to: a layer property that changes *what*
+gets drawn (colors, locations, start/end points, a shape's path) costs a
+redraw proportional to the layer's pixel area every time it's animated. A
+property that changes only *where* an already-drawn layer sits — `position`,
+`transform` — does not. For anything animating continuously and covering a
+large area, that difference is the whole ballgame.
+
 ## Caveats
 
 - Strictly read-only; there is no way to send input to a session.
