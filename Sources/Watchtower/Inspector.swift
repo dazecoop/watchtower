@@ -204,6 +204,9 @@ struct SessionInspector: View {
                         InspectorLine(event: event)
                             .id(event.id)
                     }
+                    if !session.subagents.isEmpty {
+                        subagentsSection(session)
+                    }
                     if session.state == .working {
                         ThinkingStrip(since: events.last?.at ?? session.statusUpdatedAt,
                                       seed: seed(session),
@@ -239,6 +242,17 @@ struct SessionInspector: View {
 
     private func seed(_ session: SessionSnapshot) -> Int {
         abs(session.sessionID.unicodeScalars.reduce(0) { ($0 &* 31 &+ Int($1.value)) & 0xffff })
+    }
+
+    // MARK: Subagents
+
+    /// Spawned agents, hung below the feed off a shared trunk line — the
+    /// same `SubagentTrunk` the grid tile uses, just inset to the feed's
+    /// own horizontal padding.
+    private func subagentsSection(_ session: SessionSnapshot) -> some View {
+        SubagentTrunk(subagents: session.subagents)
+            .padding(.horizontal, 16)
+            .padding(.top, 4)
     }
 
     // MARK: Footer

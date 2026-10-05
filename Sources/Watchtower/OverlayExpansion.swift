@@ -86,7 +86,7 @@ struct ExpandedPanel: View {
             header
 
             if rows.isEmpty {
-                Text(store.hasCleanedUp ? "All cleaned up" : "No Claude sessions running")
+                Text("No Claude sessions running")
                     .font(.system(size: 12, design: .rounded))
                     .foregroundStyle(.white.opacity(0.4))
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -118,12 +118,6 @@ struct ExpandedPanel: View {
             NotchStatus(store: store)
 
             Spacer(minLength: 0)
-
-            if store.hasCleanedUp {
-                NotchChip(text: "Show all") { if !measuring { store.restoreCleanedUp() } }
-            } else if store.cleanableCount > 0 {
-                NotchChip(text: "Clean up") { if !measuring { store.cleanUp() } }
-            }
 
             NotchChip(text: "Open") { if !measuring { onOpenApp() } }
         }
@@ -215,10 +209,10 @@ struct ExpandedAppPanel: View {
 
     private var columns: [GridItem] {
         if store.columnCount > 0 {
-            return Array(repeating: GridItem(.flexible(minimum: 220), spacing: 14),
+            return Array(repeating: GridItem(.flexible(minimum: 220), spacing: 14, alignment: .top),
                          count: store.columnCount)
         }
-        return [GridItem(.adaptive(minimum: 320, maximum: 620), spacing: 14)]
+        return [GridItem(.adaptive(minimum: 320, maximum: 620), spacing: 14, alignment: .top)]
     }
 
     var body: some View {
@@ -280,19 +274,6 @@ struct ExpandedAppPanel: View {
 
             NotchControl(symbol: "bolt.fill", on: store.activeOnly, help: "Hide idle sessions") {
                 store.activeOnly.toggle()
-            }
-            // In-app only: the sessions are left alone, and any that stirs
-            // reappears on its own.
-            if store.hasCleanedUp {
-                NotchControl(symbol: "arrow.uturn.backward", on: true,
-                             help: "Bring back the sessions you cleaned up") {
-                    store.restoreCleanedUp()
-                }
-            } else if store.cleanableCount > 0 {
-                NotchControl(symbol: "sparkles", on: false,
-                             help: "Clean up: hide \(store.cleanableCount) idle session\(store.cleanableCount == 1 ? "" : "s") from Watchtower") {
-                    store.cleanUp()
-                }
             }
             NotchControl(symbol: store.paused ? "play.fill" : "pause.fill",
                          on: store.paused,

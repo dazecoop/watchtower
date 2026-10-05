@@ -177,7 +177,13 @@ final class TranscriptTail {
                 state.toolCalls += 1
                 if raw == "Task" || raw == "Agent" {
                     let sub = input["subagent_type"] as? String ?? "agent"
-                    append(at: at, kind: .subagent(sub), detail: summarize(tool: raw, input: input))
+                    let toolUseId = block["id"] as? String
+                    append(at: at, kind: .subagent(sub), detail: summarize(tool: raw, input: input), toolUseId: toolUseId)
+                } else if raw == "SubagentHandback" {
+                    // A subagent's own closing move — it reports to its
+                    // caller and stops. Protocol plumbing, not worth a line
+                    // in its feed; just marks it done.
+                    state.handedBack = true
                 } else if raw == "AskUserQuestion" {
                     // Claude stops here until you answer, so this is your
                     // turn in all but the registry's bookkeeping.
@@ -216,6 +222,7 @@ final class TranscriptTail {
                 append(at: at, kind: .prompt, detail: clean.clipped(300))
 
             case "tool_result":
+                if let id = block["tool_use_id"] as? String { state.resolvedToolUseIDs.insert(id) }
                 let body = resultText(block["content"])
                 let lines = body.isEmpty ? 0 : body.split(whereSeparator: \.isNewline).count
                 let isError = block["is_error"] as? Bool ?? false
@@ -278,9 +285,9 @@ final class TranscriptTail {
         return ""
     }
 
-    private func append(at: Date, kind: ActivityEvent.Kind, detail: String) {
+    private func append(at: Date, kind: ActivityEvent.Kind, detail: String, toolUseId: String? = nil) {
         counter += 1
-        state.events.append(ActivityEvent(id: counter, at: at, kind: kind, detail: detail))
+        state.events.append(ActivityEvent(id: counter, at: at, kind: kind, detail: detail, toolUseId: toolUseId))
         state.lastEventAt = at
     }
 

@@ -8,11 +8,13 @@ struct RootView: View {
     @Environment(\.openWindow) private var openWindow
 
     private var columns: [GridItem] {
+        // Top-aligned: a tile with subagents can run taller than its row
+        // mates without dragging them down into its empty space too.
         if store.columnCount > 0 {
-            return Array(repeating: GridItem(.flexible(minimum: 220), spacing: 14),
+            return Array(repeating: GridItem(.flexible(minimum: 220), spacing: 14, alignment: .top),
                          count: store.columnCount)
         }
-        return [GridItem(.adaptive(minimum: 320, maximum: 620), spacing: 14)]
+        return [GridItem(.adaptive(minimum: 320, maximum: 620), spacing: 14, alignment: .top)]
     }
 
     var body: some View {
@@ -128,22 +130,7 @@ struct RootView: View {
                 Image(systemName: "bolt.fill")
             }
             .toggleStyle(.button)
-            .help(store.activeOnly ? "Showing active sessions only" : "Hide idle sessions")
-
-            // Clears idle sessions out of the app only — nothing is sent to
-            // the sessions themselves, and any that stirs comes back on its own.
-            // Pointless alongside the bolt filter, which hides them all anyway.
-            if !store.activeOnly {
-                Button {
-                    if store.hasCleanedUp { store.restoreCleanedUp() } else { store.cleanUp() }
-                } label: {
-                    Image(systemName: store.hasCleanedUp ? "arrow.uturn.backward" : "sparkles")
-                }
-                .disabled(!store.hasCleanedUp && store.cleanableCount == 0)
-                .help(store.hasCleanedUp
-                      ? "Bring back the sessions you cleaned up"
-                      : "Clean up: hide \(store.cleanableCount) idle session\(store.cleanableCount == 1 ? "" : "s") from Watchtower")
-            }
+            .help(store.activeOnly ? "Showing active sessions only — click to show idle ones too" : "Hide idle sessions")
 
             Menu {
                 Picker("Theme", selection: $store.theme) {
@@ -269,11 +256,16 @@ struct SessionTile: View {
                 }
             }
 
+            if !session.subagents.isEmpty {
+                SubagentTrunk(subagents: session.subagents)
+                    .padding(.top, 1)
+            }
+
             Spacer(minLength: 0)
             footer
         }
         .padding(14)
-        .frame(height: 300, alignment: .top)
+        .frame(minHeight: 300, alignment: .top)
         .background {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(theme.style?.card ?? Color(nsColor: .controlBackgroundColor).opacity(0.72))
@@ -331,11 +323,6 @@ struct SessionTile: View {
         Divider()
         Button("Copy Project Path") { SessionActions.copy(session.cwd) }
         Button("Copy Session ID") { SessionActions.copy(session.sessionID) }
-        Divider()
-        // Only an idle session stays hidden; anything else would be back on
-        // the next refresh, which is a button that appears to do nothing.
-        Button("Hide Until It Stirs") { store.hide(session) }
-            .disabled(session.state != .dormant)
     }
 
     private var header: some View {
@@ -632,6 +619,135 @@ func eventColor(_ kind: ActivityEvent.Kind, _ scheme: ColorScheme) -> Color {
 }
 
 
+// MARK: - Subagents
+
+/// A session's spawned agents, hung below its feed as a column of small
+/// cards off a shared trunk line — a session's own little org chart. Used
+/// identically by the grid tile and the inspector, so a session reads the
+/// same way whether you're glancing at the fleet or looking at one closely.
+struct SubagentTrunk: View {
+    let subagents: [SubagentSnapshot]
+
+    private let trunkColor = Color.primary.opacity(0.12)
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Rectangle()
+                .fill(trunkColor)
+                .frame(width: 1.5, height: 8)
+                .padding(.leading, 9.25)
+
+            HStack(spacing: 5) {
+                Image(systemName: "point.3.filled.connected.trianglepath.dotted")
+                    .font(.system(size: 9))
+                Text("Subagents")
+                    .font(.system(size: 9, weight: .semibold))
+                    .textCase(.uppercase)
+                Text("\(subagents.count)")
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+            }
+            .foregroundStyle(.tertiary)
+            .padding(.bottom, 6)
+
+            ZStack(alignment: .topLeading) {
+                Rectangle()
+                    .fill(trunkColor)
+                    .frame(width: 1.5)
+                    .frame(maxHeight: .infinity)
+                    .padding(.leading, 9.25)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(subagents) { agent in
+                        HStack(alignment: .center, spacing: 8) {
+                            Rectangle()
+                                .fill(trunkColor)
+                                .frame(width: 9, height: 1.5)
+                            SubagentChildTile(agent: agent)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// One spawned agent, shown as a small card under the session that spawned
+/// it: what it is, what it's for, whether it's still going, and the newest
+/// line from its own feed — enough to know what it's up to without opening
+/// it as a session of its own.
+struct SubagentChildTile: View {
+    let agent: SubagentSnapshot
+
+    @Environment(\.liveTicking) private var live
+    @State private var hovering = false
+
+    private var running: Bool { agent.status == .running }
+
+    private var statusLabel: String {
+        switch agent.status {
+        case .running: return "running"
+        case .done: return "done"
+        case .stalled: return "stalled"
+        }
+    }
+
+    private var statusColor: Color {
+        switch agent.status {
+        case .running: return .workingGreen
+        case .done: return .secondary
+        case .stalled: return .waitingAmber
+        }
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            ZStack {
+                if running, live {
+                    PulseRing().frame(width: PulseRing.diameter, height: PulseRing.diameter)
+                }
+                Circle()
+                    .fill(statusColor.opacity(agent.status == .done ? 0.5 : 1))
+                    .frame(width: 6, height: 6)
+            }
+            .frame(width: 22, height: 14)
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(agent.agentType)
+                        .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.primary.opacity(0.92))
+                        .lineLimit(1)
+                    Spacer(minLength: 6)
+                    Text(statusLabel)
+                        .font(.system(size: 8.5, weight: .medium))
+                        .foregroundStyle(statusColor)
+                }
+
+                Text(agent.headline.isEmpty ? "No activity yet" : agent.headline)
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(.primary.opacity(0.82))
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let last = agent.parsed.events.last {
+                    FeedLine(event: last, dim: true)
+                } else if running {
+                    RelativeAge(since: agent.lastActivity)
+                }
+            }
+        }
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .fill(Color.primary.opacity(hovering ? 0.06 : 0.035)))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .strokeBorder(Color.primary.opacity(0.09)))
+        .onHover { hovering = $0 }
+        .help(agent.status == .stalled
+              ? "No word from this agent in a while, and its session has moved on — probably abandoned rather than still working."
+              : "")
+    }
+}
+
 private struct PermissionBanner: View {
     @EnvironmentObject var store: FleetStore
 
@@ -764,10 +880,6 @@ private struct EmptyState: View {
             switch reason {
             case .filtered:
                 Button("Show All Sessions") { store.activeOnly = false }
-                    .controlSize(.small)
-                    .padding(.top, 4)
-            case .cleanedUp:
-                Button("Bring Them Back") { store.restoreCleanedUp() }
                     .controlSize(.small)
                     .padding(.top, 4)
             case .noSessions:

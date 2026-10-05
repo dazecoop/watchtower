@@ -36,6 +36,10 @@ struct ActivityEvent: Identifiable, Equatable {
     let at: Date
     let kind: Kind
     let detail: String
+    /// Set on a `.subagent` spawn event to the id of the `Task`/`Agent`
+    /// tool_use block, which is the same id a subagent's own meta file
+    /// records as `toolUseId` — the join key back to its transcript.
+    var toolUseId: String? = nil
 
     var glyph: String {
         switch kind {
@@ -100,6 +104,16 @@ struct ParsedTranscript: Equatable {
     var toolCalls = 0
     var promptCount = 0
     var lastEventAt: Date?
+    /// A subagent transcript's own closing move — it calls `SubagentHandback`
+    /// to deliver its report once its work is done. Meaningless for a
+    /// top-level session, which never calls it.
+    var handedBack = false
+    /// Every `tool_use_id` this transcript has a `tool_result` for. Used to
+    /// tell whether a spawned agent is actually done: a session only blocks
+    /// on an agent it spawned in the foreground, so once this session has a
+    /// result for that `Task`/`Agent` call, the agent is done regardless of
+    /// whether its own transcript shows it saying so.
+    var resolvedToolUseIDs: Set<String> = []
 
     /// The newest record is a question Claude is waiting on you to answer.
     /// Claude Code reports the session as busy throughout, but it is your
@@ -149,6 +163,41 @@ struct RegistryEntry {
     let entrypoint: String
 }
 
+/// One agent spawned by a session via `Task`/`Agent`, read from that
+/// session's `subagents/` folder alongside its transcript. Its own
+/// `parsed` is produced by the same tail parser as a top-level session, so
+/// it carries a full little activity feed of its own.
+struct SubagentSnapshot: Identifiable, Equatable {
+    enum Status {
+        case running
+        case done
+        /// Still "running" by its own transcript, with no record anywhere of
+        /// it finishing — but it's been silent long enough, with its parent
+        /// long since idle, that it reads as abandoned rather than live. A
+        /// session only blocks on an agent it spawned in the foreground; one
+        /// spawned to run in the background can outlive the turn that
+        /// started it, and if its process died without a last word this is
+        /// the only trace left of it.
+        case stalled
+    }
+
+    let id: String
+    /// Joins back to the spawning `ActivityEvent.toolUseId` in the parent.
+    let toolUseId: String
+    let agentType: String
+    let description: String
+    let spawnDepth: Int
+    let parsed: ParsedTranscript
+    let status: Status
+
+    var headline: String {
+        if !parsed.title.isEmpty { return parsed.title }
+        return description
+    }
+
+    var lastActivity: Date { parsed.lastEventAt ?? .distantPast }
+}
+
 struct SessionSnapshot: Identifiable, Equatable {
     var id: String { sessionID }
 
@@ -163,10 +212,11 @@ struct SessionSnapshot: Identifiable, Equatable {
     let entrypoint: String
     let transcript: URL?
     let parsed: ParsedTranscript
+    let subagents: [SubagentSnapshot]
     let lastActivity: Date
     let state: SessionState
 
-    init(reg: RegistryEntry, parsed: ParsedTranscript, transcript: URL?) {
+    init(reg: RegistryEntry, parsed: ParsedTranscript, transcript: URL?, subagents: [SubagentSnapshot] = []) {
         self.pid = reg.pid
         self.sessionID = reg.sessionID
         self.name = reg.name
@@ -178,6 +228,7 @@ struct SessionSnapshot: Identifiable, Equatable {
         self.entrypoint = reg.entrypoint
         self.parsed = parsed
         self.transcript = transcript
+        self.subagents = subagents
 
         // Last sign of life from either the registry heartbeat or the transcript.
         let activity = max(reg.statusUpdatedAt, parsed.lastEventAt ?? .distantPast)

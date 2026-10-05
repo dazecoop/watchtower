@@ -6,6 +6,9 @@ import AppKit
 final class FleetEngine {
     private let usageReader = UsageReader()
     private var tails: [String: TranscriptTail] = [:]
+    /// Keyed by "<sessionID>:<agentID>", so an agent's tail survives polls
+    /// the same way a top-level session's does.
+    private var subagentTails: [String: TranscriptTail] = [:]
     private var transcriptIndex: [String: URL] = [:]
     private var indexedAt = Date.distantPast
 
@@ -21,6 +24,7 @@ final class FleetEngine {
         // Forget tails whose session has exited.
         let live = Set(entries.map(\.sessionID))
         tails = tails.filter { live.contains($0.key) }
+        subagentTails = subagentTails.filter { live.contains(sessionID(ofSubagentKey: $0.key)) }
 
         return entries.map { entry in
             let url = transcriptURL(for: entry)
@@ -31,8 +35,68 @@ final class FleetEngine {
                 tails[entry.sessionID]?.poll()
             }
             let parsed = tails[entry.sessionID]?.state ?? ParsedTranscript()
-            return SessionSnapshot(reg: entry, parsed: parsed, transcript: url)
+            let subagents = url.map {
+                loadSubagents(sessionID: entry.sessionID, transcriptURL: $0,
+                              parentResolvedToolUseIDs: parsed.resolvedToolUseIDs)
+            } ?? []
+            return SessionSnapshot(reg: entry, parsed: parsed, transcript: url, subagents: subagents)
         }
+    }
+
+    private func sessionID(ofSubagentKey key: String) -> String {
+        String(key.split(separator: ":", maxSplits: 1).first ?? "")
+    }
+
+    // MARK: - Subagents
+
+    /// Claude Code keeps a session's spawned agents in a `subagents/` folder
+    /// next to its transcript, named after the session id: one
+    /// `agent-<id>.meta.json` (who it is, and the id of the `Task`/`Agent`
+    /// tool_use that spawned it) plus `agent-<id>.jsonl` (its own transcript,
+    /// in the same shape as a top-level session's).
+    private func loadSubagents(sessionID: String, transcriptURL: URL, parentResolvedToolUseIDs: Set<String>) -> [SubagentSnapshot] {
+        let dir = transcriptURL.deletingPathExtension().appendingPathComponent("subagents")
+        guard let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else {
+            return []
+        }
+
+        var out: [SubagentSnapshot] = []
+        for meta in files where meta.lastPathComponent.hasSuffix(".meta.json") {
+            guard let data = try? Data(contentsOf: meta),
+                  let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+                  let toolUseId = obj["toolUseId"] as? String else { continue }
+
+            let agentID = String(meta.lastPathComponent.dropLast(".meta.json".count))
+            let jsonl = dir.appendingPathComponent(agentID + ".jsonl")
+            guard FileManager.default.fileExists(atPath: jsonl.path) else { continue }
+
+            let key = sessionID + ":" + agentID
+            if subagentTails[key]?.url != jsonl {
+                subagentTails[key] = TranscriptTail(url: jsonl)
+            }
+            subagentTails[key]?.poll()
+            let parsed = subagentTails[key]?.state ?? ParsedTranscript()
+
+            let status: SubagentSnapshot.Status
+            if parsed.handedBack || parentResolvedToolUseIDs.contains(toolUseId) {
+                status = .done
+            } else if Date().timeIntervalSince(parsed.lastEventAt ?? .distantPast) > SessionSnapshot.dormantAfter {
+                status = .stalled
+            } else {
+                status = .running
+            }
+
+            out.append(SubagentSnapshot(
+                id: agentID,
+                toolUseId: toolUseId,
+                agentType: obj["agentType"] as? String ?? "agent",
+                description: obj["description"] as? String ?? "",
+                spawnDepth: obj["spawnDepth"] as? Int ?? 1,
+                parsed: parsed,
+                status: status
+            ))
+        }
+        return out.sorted { $0.lastActivity < $1.lastActivity }
     }
 
     // MARK: - ~/.claude/sessions/<pid>.json
@@ -229,63 +293,20 @@ final class FleetStore: ObservableObject {
     private var displayOrder: [String] = []
     private let quietPeriod: TimeInterval = 30
 
-    /// Sessions cleaned up out of the way, against the activity timestamp they
-    /// carried when they were dismissed. Watchtower only reads Claude's files,
-    /// so this hides a session here and nothing more — the session itself is
-    /// untouched, and stirring again brings it straight back (see `listed`).
-    /// Deliberately not persisted: a tidy-up applies to the fleet in front of
-    /// you, not to every launch from here on.
-    private var dismissed: [String: Date] = [:]
-
-    /// Everything the app shows before sorting and the other filters: the
-    /// fleet, less whatever is still sitting cleaned up.
-    var listed: [SessionSnapshot] {
-        dismissed.isEmpty ? sessions : sessions.filter { !isDismissed($0) }
-    }
-
-    /// How many sessions a tidy-up would clear right now, which is what decides
-    /// whether offering one makes any sense. Counted off `listed` rather than
-    /// `visible` because the overlay lists sessions the app's own filters have
-    /// nothing to say about.
-    var cleanableCount: Int {
-        listed.filter { $0.state == .dormant }.count
-    }
-
-    /// Hides every idle session. Ones that wake up, and ones that appear later,
-    /// are unaffected.
-    func cleanUp() {
-        for session in listed where session.state == .dormant {
-            dismissed[session.id] = session.lastActivity
-        }
-        recomputeOrder(force: true)
-    }
-
-    /// Hides one idle session, on the same terms as a clean-up: it comes back
-    /// the moment it stirs.
-    func hide(_ session: SessionSnapshot) {
-        guard session.state == .dormant else { return }
-        dismissed[session.id] = session.lastActivity
-        recomputeOrder(force: true)
-    }
-
-    /// Brings everything cleaned up back.
-    func restoreCleanedUp() {
-        guard !dismissed.isEmpty else { return }
-        dismissed.removeAll()
-        recomputeOrder(force: true)
-    }
-
-    var hasCleanedUp: Bool { !dismissed.isEmpty }
+    /// Everything the app shows before sorting and the other filters. Its own
+    /// property rather than just using `sessions` directly for the call sites
+    /// that read it — the bolt filter (`activeOnly`) is the one and only way
+    /// idle sessions get hidden, so there's nothing left to subtract here.
+    var listed: [SessionSnapshot] { sessions }
 
     /// Why there is nothing on screen, so the empty state can say what to do
     /// about it rather than blame the wrong filter.
     enum EmptyReason {
-        case noSessions, cleanedUp, filtered
+        case noSessions, filtered
 
         var symbol: String {
             switch self {
             case .noSessions: return "binoculars"
-            case .cleanedUp: return "sparkles"
             case .filtered: return "bolt.slash"
             }
         }
@@ -293,7 +314,6 @@ final class FleetStore: ObservableObject {
         var title: String {
             switch self {
             case .noSessions: return "No Claude sessions running"
-            case .cleanedUp: return "All cleaned up"
             case .filtered: return "No active sessions"
             }
         }
@@ -302,8 +322,6 @@ final class FleetStore: ObservableObject {
             switch self {
             case .noSessions:
                 return "Start Claude Code in a project and it will appear here within a second."
-            case .cleanedUp:
-                return "The idle sessions are hidden here only, and still running. Show all brings them back, as will any of them stirring."
             case .filtered:
                 return "Everything is idle. Turn off the bolt filter to see them all."
             }
@@ -311,27 +329,7 @@ final class FleetStore: ObservableObject {
     }
 
     var emptyReason: EmptyReason {
-        if sessions.isEmpty { return .noSessions }
-        if listed.isEmpty { return .cleanedUp }
-        return .filtered
-    }
-
-    /// A dismissal lasts only as long as the session stays as it was. Anything
-    /// new in its transcript, or any state other than idle, and it is back.
-    private func isDismissed(_ session: SessionSnapshot) -> Bool {
-        guard let at = dismissed[session.id] else { return false }
-        return session.state == .dormant && session.lastActivity <= at
-    }
-
-    /// Drops dismissals that no longer hold, so a session that has woken up is
-    /// not quietly re-hidden if it later goes idle again.
-    private func pruneDismissed() {
-        guard !dismissed.isEmpty else { return }
-        let live = Dictionary(sessions.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-        dismissed = dismissed.filter { id, at in
-            guard let session = live[id] else { return false }
-            return session.state == .dormant && session.lastActivity <= at
-        }
+        sessions.isEmpty ? .noSessions : .filtered
     }
 
     // MARK: Preferences
@@ -492,6 +490,51 @@ final class FleetStore: ObservableObject {
     /// 0…1 along the chosen edge. Set by the slider or by dragging the overlay.
     @Published var overlayOffset = storedDouble("overlayOffset", 0.5) {
         didSet { UserDefaults.standard.set(overlayOffset, forKey: "overlayOffset") }
+    }
+
+    /// Which physical screen the notch lives on, as that screen's stable
+    /// `CGDirectDisplayID`. Nil means "pick automatically" — the one with an
+    /// actual notch, falling back to whichever screen is currently "main" —
+    /// which `OverlayController` falls back to on its own; this only ever
+    /// overrides that choice when it names a screen that's still connected.
+    @Published var overlayScreenID: UInt32? = {
+        (UserDefaults.standard.object(forKey: "overlayScreenID") as? NSNumber)?.uint32Value
+    }() {
+        didSet {
+            if let overlayScreenID {
+                UserDefaults.standard.set(overlayScreenID, forKey: "overlayScreenID")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "overlayScreenID")
+            }
+        }
+    }
+
+    /// The screen the notch is on right now, by the same preference order
+    /// `OverlayController` resolves against: an explicit, still-connected
+    /// choice first, then the one with an actual notch, then whatever is
+    /// "main". Settings reads this to label the current screen and to know
+    /// where "next" moves from; it never touches the live panel itself.
+    private var currentOverlayScreen: NSScreen? {
+        let screens = NSScreen.screens
+        if let id = overlayScreenID, let chosen = screens.first(where: { $0.displayID == id }) {
+            return chosen
+        }
+        return screens.first { $0.safeAreaInsets.top > 0 } ?? NSScreen.main ?? screens.first
+    }
+
+    var overlayScreenCount: Int { NSScreen.screens.count }
+
+    var overlayScreenName: String { currentOverlayScreen?.localizedName ?? "—" }
+
+    /// Moving the notch between screens isn't something a drag can do — it
+    /// only ever travels along one screen's edge, by design, so another
+    /// screen entirely needs its own control. Cycles to the next connected
+    /// screen and wraps back to the first.
+    func moveOverlayToNextScreen() {
+        let screens = NSScreen.screens
+        guard screens.count > 1 else { return }
+        let idx = currentOverlayScreen.flatMap { screens.firstIndex(of: $0) } ?? -1
+        overlayScreenID = screens[(idx + 1) % screens.count].displayID
     }
 
     /// Drives both the sweep out of the screen edge and the inner corner
@@ -730,7 +773,6 @@ final class FleetStore: ObservableObject {
     /// explicitly changes how the grid is sorted or filtered. Otherwise tiles
     /// keep their slots; new sessions are appended rather than inserted.
     func recomputeOrder(force: Bool = false) {
-        pruneDismissed()
         let shown = listed
         var pool = activeOnly ? shown.filter { $0.state != .dormant } : shown
         let needle = query.trimmingCharacters(in: .whitespaces).lowercased()
@@ -932,10 +974,24 @@ final class FleetStore: ObservableObject {
                 // Publishing identical snapshots re-lays out the whole grid
                 // once a second for no reason.
                 let changed = self.sessions != snaps
+                // A session that wasn't here a moment ago needs a real slot,
+                // not just appending to the end of whatever order the grid
+                // already settled into — otherwise it starts at the bottom
+                // and stays there until the fleet next goes quiet. Anything
+                // short of a new arrival (activity ticking over, a session
+                // exiting) still waits for the quiet period, so the grid
+                // isn't constantly reshuffling under you.
+                let isNewSession = changed && snaps.contains { snap in
+                    !self.sessions.contains { $0.id == snap.id }
+                }
                 if changed { self.sessions = snaps }
                 let merged = self.freshestUsage(usage)
                 if self.usage != merged { self.usage = merged }
-                if changed || self.ticks % 10 == 0 { self.recomputeOrder() }
+                if isNewSession {
+                    self.recomputeOrder(force: true)
+                } else if changed || self.ticks % 10 == 0 {
+                    self.recomputeOrder()
+                }
                 self.applySleepGuard()
                 self.applyEdgeGlow()
                 if changed { self.applyDockBadge() }

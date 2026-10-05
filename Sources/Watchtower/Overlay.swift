@@ -147,6 +147,15 @@ enum AppWindow {
     static var reopen: (() -> Void)?
 }
 
+/// A screen's stable identifier, for remembering "this one" across a
+/// reconnect rather than an array index that reshuffles whenever a monitor
+/// comes or goes.
+extension NSScreen {
+    var displayID: UInt32? {
+        (deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value
+    }
+}
+
 // MARK: - Panel
 
 /// Never becomes key or main: the overlay is a readout, and taking focus from
@@ -483,8 +492,17 @@ final class OverlayController: ObservableObject {
         host.translatesAutoresizingMaskIntoConstraints = true
         host.autoresizingMask = [.width, .height]
 
+        // Born on the right screen from the first frame, rather than at
+        // system origin (0,0) — which AppKit resolves to whatever display is
+        // "main", not necessarily the one this panel is actually meant to
+        // live on. Getting this right at creation, not just once `reposition`
+        // runs, is what keeps the panel's backing store allocated for that
+        // screen's real scale from the start.
+        let home = screen?.frame ?? .zero
+        let initialOrigin = CGPoint(x: home.midX - 210, y: home.maxY - 40)
+
         let panel = OverlayPanel(
-            contentRect: CGRect(origin: .zero, size: CGSize(width: 420, height: 40)),
+            contentRect: CGRect(origin: initialOrigin, size: CGSize(width: 420, height: 40)),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -536,7 +554,30 @@ final class OverlayController: ObservableObject {
 
     // MARK: Geometry
 
-    private var screen: NSScreen? { panel?.screen ?? NSScreen.main ?? NSScreen.screens.first }
+    /// An explicit pick from Settings (`overlayScreenID`) always wins, even
+    /// over a panel that's already sitting somewhere else — that's what
+    /// lets "Move to Next Screen" actually relocate an open notch rather
+    /// than only taking effect the next time it's created. Short of that,
+    /// an already-placed panel stays where it is rather than re-running the
+    /// automatic pick every time this is read; only a fresh panel (`show`,
+    /// where `panel` is still nil) falls all the way through to it.
+    ///
+    /// Automatic prefers the screen with an actual notch (a non-zero top
+    /// safe area): `NSScreen.main` is whichever display currently holds the
+    /// menu bar, which on a Mac with external monitors is very often not
+    /// the built-in one — and that's the only screen a notch can physically
+    /// exist on. Landing on the wrong one isn't just conceptually odd, it
+    /// can mean a non-Retina external display, where every pixel renders at
+    /// half the resolution it should and everything reads a little soft.
+    private var screen: NSScreen? {
+        if let id = store?.overlayScreenID, let chosen = NSScreen.screens.first(where: { $0.displayID == id }) {
+            return chosen
+        }
+        return panel?.screen
+            ?? NSScreen.screens.first { $0.safeAreaInsets.top > 0 }
+            ?? NSScreen.main
+            ?? NSScreen.screens.first
+    }
 
     /// The last frame we asked for, and the content signature it was measured
     /// against. Compared against our own request rather than `panel.frame`,
@@ -559,8 +600,6 @@ final class OverlayController: ObservableObject {
             "\(store.overlayFlushStart)\(store.overlayFlushEnd)",
             limits.joined(separator: ","),
             "\(store.workingCount)/\(store.waitingCount)/\(store.sessions.count)",
-            // Cleaning up changes both the row count and the header's chips.
-            "\(store.listed.count)/\(store.hasCleanedUp)/\(store.cleanableCount > 0)",
             // Each indicator the header gains is width the panel has to allow.
             "\(store.checkInternet)/\(store.keepAwake)"
         ].joined(separator: "|")
@@ -612,16 +651,29 @@ final class OverlayController: ObservableObject {
         guard let panel, let host else { return }
         appliedFrame = target
 
+        // The anchor/offset maths that produces `target` interpolates
+        // continuously (a slider position, a midpoint split in two) and
+        // routinely lands on a fractional point. A borderless panel honours
+        // that exactly rather than snapping to the pixel grid the way a
+        // normal titled window does, so every bit of text in it rendered a
+        // hair off-grid — soft rather than crisp. Rounding to the nearest
+        // point fixes that; even at 1x scale it's a sub-pixel nudge no one
+        // will see the panel move.
+        let aligned = CGRect(x: target.origin.x.rounded(),
+                              y: target.origin.y.rounded(),
+                              width: target.size.width.rounded(),
+                              height: target.size.height.rounded())
+
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0
             context.allowsImplicitAnimation = false
-            panel.setFrame(target, display: true, animate: false)
+            panel.setFrame(aligned, display: true, animate: false)
         }
 
         // `sizingOptions` drives the hosting view off its intrinsic size, which
         // leaves it laying out against its own constraints rather than the
         // panel it now fills. Pinning the frame keeps the two in step.
-        host.frame = CGRect(origin: .zero, size: target.size)
+        host.frame = CGRect(origin: .zero, size: aligned.size)
     }
 
     /// Whether either end of the notch has reached the screen corner. The two

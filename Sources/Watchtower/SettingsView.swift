@@ -193,6 +193,17 @@ private struct NotchSettings: View {
             }
 
             Section("Position") {
+                if store.overlayScreenCount > 1 {
+                    HStack {
+                        Text("Screen")
+                        Spacer()
+                        Text(store.overlayScreenName)
+                            .foregroundStyle(.secondary)
+                        Button("Move to Next Screen") { store.moveOverlayToNextScreen() }
+                    }
+                    Caption("A notch only physically exists on one screen, but the readout can sit on any of them. Dragging only moves it along its current screen's edge — this is what moves it to another screen entirely.")
+                }
+
                 Picker("Edge", selection: $store.overlayEdge) {
                     ForEach(OverlayEdge.allCases) { Text($0.label).tag($0) }
                 }

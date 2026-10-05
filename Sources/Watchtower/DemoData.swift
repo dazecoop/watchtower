@@ -23,9 +23,24 @@ enum DemoData {
 
     private static var counter = 0
 
-    private static func event(_ ago: TimeInterval, _ kind: ActivityEvent.Kind, _ detail: String) -> ActivityEvent {
+    private static func event(_ ago: TimeInterval, _ kind: ActivityEvent.Kind, _ detail: String, toolUseId: String? = nil) -> ActivityEvent {
         counter += 1
-        return ActivityEvent(id: counter, at: Date().addingTimeInterval(-ago), kind: kind, detail: detail)
+        return ActivityEvent(id: counter, at: Date().addingTimeInterval(-ago), kind: kind, detail: detail, toolUseId: toolUseId)
+    }
+
+    private static func subagent(
+        _ toolUseId: String,
+        agentType: String,
+        description: String,
+        status: SubagentSnapshot.Status,
+        events: [ActivityEvent]
+    ) -> SubagentSnapshot {
+        var parsed = ParsedTranscript()
+        parsed.events = events
+        parsed.lastEventAt = events.last?.at
+        parsed.handedBack = status == .done
+        return SubagentSnapshot(id: toolUseId, toolUseId: toolUseId, agentType: agentType,
+                                 description: description, spawnDepth: 1, parsed: parsed, status: status)
     }
 
     private static func session(
@@ -38,7 +53,8 @@ enum DemoData {
         tools: Int,
         busy: Bool,
         idleFor: TimeInterval,
-        events: [ActivityEvent]
+        events: [ActivityEvent],
+        subagents: [SubagentSnapshot] = []
     ) -> SessionSnapshot {
         let entry = RegistryEntry(
             pid: Int32.random(in: 10000...99999),
@@ -63,7 +79,7 @@ enum DemoData {
         parsed.promptCount = max(1, tools / 6)
         parsed.outputTokens = tools * 1_900
 
-        return SessionSnapshot(reg: entry, parsed: parsed, transcript: nil)
+        return SessionSnapshot(reg: entry, parsed: parsed, transcript: nil, subagents: subagents)
     }
 
     private static func make() -> [SessionSnapshot] {
@@ -115,9 +131,26 @@ enum DemoData {
                 events: [
                     event(900, .tool("Bash"), "npx tsc --noEmit"),
                     event(780, .result(31), "31 errors"),
-                    event(640, .subagent("explore"), "Find every navigation.navigate call"),
+                    event(640, .subagent("Explore"), "Find every navigation.navigate call", toolUseId: "demo-explore-1"),
+                    event(610, .subagent("general-purpose"), "Rewrite the onboarding stack's route params", toolUseId: "demo-rewrite-1"),
                     event(530, .say, "Down to three errors, all in the onboarding stack where routes take optional params."),
                     event(500, .question, "Should the onboarding routes' optional params become required? It changes behaviour for deep links.")
+                ],
+                subagents: [
+                    subagent("demo-explore-1", agentType: "Explore",
+                             description: "Find every navigation.navigate call", status: .done,
+                             events: [
+                                event(635, .tool("Grep"), "navigation.navigate("),
+                                event(620, .result(47), "47 matches across 19 files"),
+                                event(615, .say, "All 47 call sites found, grouped by stack.")
+                             ]),
+                    subagent("demo-rewrite-1", agentType: "general-purpose",
+                             description: "Rewrite the onboarding stack's route params", status: .running,
+                             events: [
+                                event(600, .tool("Read"), "src/navigation/OnboardingStack.tsx"),
+                                event(560, .tool("Edit"), "src/navigation/OnboardingStack.tsx"),
+                                event(470, .tool("Bash"), "npx tsc --noEmit --project onboarding")
+                             ])
                 ]
             ),
             session(
@@ -130,7 +163,20 @@ enum DemoData {
                     event(9200, .result(4), "error: psycopg2.OperationalError: connection timed out"),
                     event(9000, .tool("Bash"), "python backfill.py --dry-run"),
                     event(8800, .result(18), "would write 1,284,003 rows"),
-                    event(8600, .say, "Dry run looks right. Holding before the real run — it's a couple of hours of writes.")
+                    event(8600, .say, "Dry run looks right. Holding before the real run — it's a couple of hours of writes."),
+                    event(8500, .subagent("general-purpose"), "Watch the backfill and report back once it's done", toolUseId: "demo-watch-1")
+                ],
+                // A background agent the session never blocked on: the
+                // session went idle waiting on you, but nothing ever heard
+                // back from the agent itself, so it still reads as stalled
+                // rather than quietly marked done.
+                subagents: [
+                    subagent("demo-watch-1", agentType: "general-purpose",
+                             description: "Watch the backfill and report back once it's done", status: .stalled,
+                             events: [
+                                event(8400, .tool("Bash"), "watch -n 60 'wc -l backfill.log'"),
+                                event(8300, .say, "Watching the log. Will report back once it crosses 1.28M rows or errors out.")
+                             ])
                 ]
             ),
             session(

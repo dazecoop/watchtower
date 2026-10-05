@@ -43,11 +43,6 @@ struct WatchtowerCommands: Commands {
                 store.activeOnly.toggle()
             }
             .keyboardShortcut("l", modifiers: .command)
-            Button(store.hasCleanedUp ? "Show Cleaned Up Sessions" : "Clean Up Idle Sessions") {
-                if store.hasCleanedUp { store.restoreCleanedUp() } else { store.cleanUp() }
-            }
-            .keyboardShortcut("k", modifiers: [.command, .shift])
-            .disabled(!store.hasCleanedUp && store.cleanableCount == 0)
             Button(store.showOverlay ? "Hide Overlay" : "Show Overlay") {
                 store.showOverlay.toggle()
             }
